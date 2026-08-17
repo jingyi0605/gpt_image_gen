@@ -180,7 +180,6 @@ const els = {
   uploadPreview: $("uploadPreview"),
   clearUploadsButton: $("clearUploadsButton"),
   sizeInput: $("sizeInput"),
-  sourceSizeHint: $("sourceSizeHint"),
   qualityInput: $("qualityInput"),
   countInput: $("countInput"),
   submitButton: $("submitButton"),
@@ -228,7 +227,6 @@ const state = {
   continuation: null,
   fileDimensions: new WeakMap(),
   fileDimensionPromises: new WeakMap(),
-  lastSourceSize: null,
   jobs: new Map(),
   pollers: new Map(),
   retryTimers: new Map(),
@@ -822,9 +820,6 @@ function applyScene(scene, { preserveContinuation = false } = {}) {
   renderPromptPresetOptions(scene, config.defaultPresetId);
   els.promptInput.value = "";
   setMessage(els.submitMessage, "");
-  els.editSourceBlock.hidden = config.endpoint !== "edits";
-  els.submitButtonLabel.textContent = config.endpoint === "edits" ? "加入编辑队列" : "加入生成队列";
-  updateSourceSizeHint();
   if (!preserveContinuation && config.endpoint === "generations" && state.files.length) clearUploads({ keepContinuation: true });
   syncWorkspaceControls();
 }
@@ -909,22 +904,6 @@ function ensureFileDimensions(file) {
   return promise;
 }
 
-function formatRatio(width, height) {
-  const divisor = gcdInteger(width, height);
-  return `${Math.round(width / divisor)}:${Math.round(height / divisor)}`;
-}
-
-function gcdInteger(first, second) {
-  let a = Math.abs(Math.round(first));
-  let b = Math.abs(Math.round(second));
-  while (b) {
-    const remainder = a % b;
-    a = b;
-    b = remainder;
-  }
-  return a || 1;
-}
-
 function roundToStep(value, step = AUTO_SIZE_STEP) {
   return Math.max(AUTO_SIZE_MIN, Math.round(value / step) * step);
 }
@@ -942,32 +921,10 @@ function inferSourceSize(dimensions) {
     height = roundToStep(height * correction);
   }
   return {
-    sourceWidth,
-    sourceHeight,
     width,
     height,
-    ratio: formatRatio(sourceWidth, sourceHeight),
     size: `${width}x${height}`,
   };
-}
-
-function updateSourceSizeHint() {
-  if (SCENES[state.scene]?.endpoint !== "edits") {
-    els.sourceSizeHint.textContent = "生图场景将显式传递 size=auto。";
-    return;
-  }
-  if (!state.files.length) {
-    els.sourceSizeHint.textContent = "上传图片后自动读取宽高、比例并传递 size。";
-    return;
-  }
-  const dimensions = state.fileDimensions.get(state.files[0]);
-  if (!dimensions) {
-    els.sourceSizeHint.textContent = "正在读取源图尺寸……";
-    return;
-  }
-  const inferred = inferSourceSize(dimensions);
-  state.lastSourceSize = inferred;
-  els.sourceSizeHint.textContent = `源图 ${inferred.sourceWidth}×${inferred.sourceHeight} · ${inferred.ratio} → size=${inferred.size}`;
 }
 
 function revokeFilePreview(file) {
@@ -994,7 +951,6 @@ function acceptFiles(fileList) {
   valid.forEach((file) => {
     ensureFileDimensions(file)
       .then(() => {
-        updateSourceSizeHint();
         renderUploadPreview();
       })
       .catch((error) => showToast(error.message));
@@ -1017,9 +973,7 @@ function clearUploads({ keepContinuation = false } = {}) {
   state.files.forEach(revokeFilePreview);
   state.files = [];
   if (!keepContinuation) state.continuation = null;
-  state.lastSourceSize = null;
   els.imageInput.value = "";
-  updateSourceSizeHint();
   renderUploadPreview();
   syncWorkspaceControls();
 }
@@ -1028,8 +982,6 @@ function removeUpload(index) {
   const [file] = state.files.splice(index, 1);
   revokeFilePreview(file);
   if (!state.files.length && state.continuation) state.continuation = null;
-  state.lastSourceSize = null;
-  updateSourceSizeHint();
   renderUploadPreview();
   syncWorkspaceControls();
 }
@@ -1102,9 +1054,7 @@ async function buildPayload() {
   if (els.sizeInput.value === "auto") {
     if (getActiveEndpoint() === "edits" && state.files.length) {
       const dimensions = await ensureFileDimensions(state.files[0]);
-      state.lastSourceSize = inferSourceSize(dimensions);
-      payload.size = state.lastSourceSize.size;
-      updateSourceSizeHint();
+      payload.size = inferSourceSize(dimensions).size;
     } else {
       // 不省略 auto，避免兼容网关按默认值回退到 1024x1024。
       payload.size = "auto";
