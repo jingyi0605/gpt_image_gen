@@ -1,6 +1,7 @@
 const DB_NAME = "imageflow-local";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const DB_STORE = "generations";
+const DB_JOB_STORE = "jobs";
 const SESSION_KEY = "imageflow.connection";
 const PROMPT_OVERRIDES_KEY = "imageflow.prompt-overrides.v1";
 const SUB2API_KEY_NAME = "image";
@@ -8,6 +9,9 @@ const SUB2API_KEY_ENDPOINTS = ["/api/v1/keys", "/api/v1/api-keys"];
 const MAX_FILES = 4;
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
 const POLL_INTERVAL = 3500;
+const MAX_CONCURRENT_JOBS = 2;
+const MAX_JOB_ATTEMPTS = 3;
+const RETRY_DELAYS = [3000, 10000, 30000];
 const AUTO_SIZE_MIN = 256;
 const AUTO_SIZE_STEP = 16;
 const AUTO_SIZE_MAX = 2048;
@@ -130,6 +134,7 @@ const SCENES = {
 const STATUS_LABELS = {
   queued: "排队中",
   running: "生成中",
+  retrying: "等待重试",
   succeeded: "已完成",
   failed: "失败",
   deleted: "已删除",
@@ -224,6 +229,8 @@ const state = {
   lastSourceSize: null,
   jobs: new Map(),
   pollers: new Map(),
+  retryTimers: new Map(),
+  runningJobs: new Set(),
   galleryRecords: [],
   db: null,
   toastTimer: null,
@@ -686,7 +693,10 @@ function commitSettings(event) {
   setMessage(els.settingsMessage, "");
   showToast("连接配置已更新");
   verifyConnection().then((connected) => {
-    if (connected) refreshQueue({ silent: true });
+    if (connected) {
+      refreshQueue({ silent: true });
+      resumeLocalJobs();
+    }
   });
 }
 
@@ -1016,28 +1026,17 @@ function isUnsupportedEndpointError(error) {
   );
 }
 
-function buildEditForm(payload, includeEndpoint = false) {
+function buildEditForm(payload, files = [], includeEndpoint = false) {
   const form = new FormData();
   if (includeEndpoint) form.append("endpoint", "edits");
   Object.entries(payload).forEach(([key, value]) => form.append(key, String(value)));
-  state.files.forEach((file) => form.append("image", file, file.name));
+  files.forEach((file, index) => form.append("image", file, file.name || `image-${index + 1}.png`));
   return form;
 }
 
-async function submitRemoteTask(endpoint, payload) {
+async function submitRemoteTask(endpoint, payload, files = []) {
   if (endpoint === "generations") {
     try {
-      return {
-        mode: "queue",
-        response: await apiRequest("/images/jobs", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...payload, endpoint }),
-        }),
-      };
-    } catch (error) {
-      if (!isUnsupportedEndpointError(error)) throw error;
-      // 普通 OpenAI 兼容网关没有本站的 jobs 扩展时，回退到同步标准接口。
       return {
         mode: "sync",
         response: await apiRequest("/images/generations", {
@@ -1046,44 +1045,63 @@ async function submitRemoteTask(endpoint, payload) {
           body: JSON.stringify(payload),
         }),
       };
+    } catch (error) {
+      if (!isUnsupportedEndpointError(error)) throw error;
+      return {
+        mode: "queue",
+        response: await apiRequest("/images/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, endpoint }),
+        }),
+      };
     }
   }
 
   try {
     return {
-      mode: "queue",
-      response: await apiRequest("/images/jobs", {
+      mode: "sync",
+      response: await apiRequest("/images/edits", {
         method: "POST",
-        body: buildEditForm(payload, true),
+        body: buildEditForm(payload, files),
       }),
     };
   } catch (error) {
     if (!isUnsupportedEndpointError(error)) throw error;
     return {
-      mode: "sync",
-      response: await apiRequest("/images/edits", {
+      mode: "queue",
+      response: await apiRequest("/images/jobs", {
         method: "POST",
-        body: buildEditForm(payload),
+        body: buildEditForm(payload, files, true),
       }),
     };
   }
 }
 
 function createLocalJob(payload) {
+  const files = state.files.slice();
+  const now = Date.now();
   return {
     id: createId("local"),
     remoteId: "",
     endpoint: SCENES[state.scene].endpoint,
     model: state.config.model,
     scene: state.scene,
+    payload: { ...payload },
+    files,
     prompt: payload.prompt,
     size: payload.size || "auto",
     quality: payload.quality || "auto",
     count: payload.n || 1,
     status: "queued",
-    createdAt: Date.now(),
+    attempts: 0,
+    maxAttempts: MAX_JOB_ATTEMPTS,
+    nextAttemptAt: 0,
+    createdAt: now,
+    updatedAt: now,
     images: [],
     error: "",
+    lastError: "",
   };
 }
 
@@ -1106,45 +1124,23 @@ async function submitJob() {
   }
 
   const job = createLocalJob(payload);
-  state.jobs.set(job.id, job);
-  renderQueue();
   els.submitButton.disabled = true;
-  els.submitButtonLabel.textContent = "提交中";
+  els.submitButtonLabel.textContent = "保存任务";
   els.previewStatus.textContent = "提交中";
   els.previewStatus.className = "preview-status is-active";
 
   try {
-    const result = await submitRemoteTask(endpoint, payload);
-    const response = result.response;
-    if (result.mode === "sync") {
-      job.status = "succeeded";
-      job.images = normalizeImages(response?.images || response?.data || []);
-      job.finishedAt = Date.now();
-      if (!job.images.length) throw new ApiError("标准图片接口没有返回图片", 0);
-      await persistJob(job);
-      showLatestResult(job);
-      renderQueue();
-      loadGallery();
-      els.previewStatus.textContent = "已完成";
-      els.previewStatus.className = "preview-status is-success";
-      setConnectionVisual("connected", "已连接");
-      setMessage(els.submitMessage, "标准图片接口已完成（未使用远程队列）", "success");
-      showToast("图片生成完成");
-      goToStep("queue");
-      return;
-    }
-
-    job.remoteId = response?.id || response?.job_id || "";
-    if (!job.remoteId) throw new ApiError("接口没有返回任务 ID", 0);
-    job.status = response.status || "queued";
+    state.jobs.set(job.id, job);
+    await persistLocalJob(job);
     renderQueue();
-    setMessage(els.submitMessage, "任务已加入队列", "success");
-    showToast("任务已加入队列");
+    setMessage(els.submitMessage, "任务已加入本地队列", "success");
+    showToast("任务已加入本地队列");
     goToStep("queue");
-    startPolling(job);
   } catch (error) {
+    state.jobs.delete(job.id);
     job.status = "failed";
     job.error = friendlyError(error);
+    job.lastError = job.error;
     renderQueue();
     els.previewStatus.textContent = "提交失败";
     els.previewStatus.className = "preview-status is-error";
@@ -1152,6 +1148,7 @@ async function submitJob() {
   } finally {
     els.submitButton.disabled = false;
     els.submitButtonLabel.textContent = endpoint === "edits" ? "加入编辑队列" : "加入生成队列";
+    pumpQueue();
   }
 }
 
@@ -1160,7 +1157,9 @@ function friendlyError(error) {
   if (error?.status === 402) return "余额不足，请先充值";
   if (error?.status === 429) return "请求过多或队列已满，请稍后再试";
   if (error?.status >= 500) return "上游接口异常，请稍后重试";
-  if (String(error?.message || "").includes("Failed to fetch")) return "无法连接接口，请检查 Base URL、CORS 和网络";
+  if (/failed to fetch|networkerror|无法连接|网络/i.test(String(error?.message || ""))) {
+    return "无法连接接口，请检查 Base URL、CORS 和网络";
+  }
   return error?.message || "请求失败";
 }
 
@@ -1180,38 +1179,214 @@ function normalizeImages(images) {
     .filter((image) => image.source);
 }
 
+function isRetryableError(error) {
+  if (!error) return true;
+  if ([408, 429].includes(error.status) || error.status >= 500) return true;
+  if (error instanceof TypeError || error.name === "TypeError") return true;
+  if (error.status === 0) return /failed to fetch|networkerror|无法连接|网络/i.test(String(error.message || ""));
+  return false;
+}
+
+function serializeJobFiles(files = []) {
+  return files.map((file) => ({
+    name: file.name || "image.png",
+    type: file.type || "image/png",
+    size: file.size || 0,
+    lastModified: file.lastModified || Date.now(),
+    blob: file,
+  }));
+}
+
+function restoreJobFiles(records = []) {
+  return records
+    .map((record) => {
+      if (!record?.blob) return null;
+      try {
+        return new File([record.blob], record.name || "image.png", {
+          type: record.type || record.blob.type || "image/png",
+          lastModified: record.lastModified || Date.now(),
+        });
+      } catch {
+        return record.blob;
+      }
+    })
+    .filter(Boolean);
+}
+
+function jobPayload(job) {
+  return (
+    job.payload || {
+      model: job.model,
+      prompt: job.prompt,
+      n: job.count || 1,
+      size: job.size || "auto",
+      ...(job.quality && job.quality !== "auto" ? { quality: job.quality } : {}),
+      response_format: "b64_json",
+    }
+  );
+}
+
+function updateJob(job, patch = {}) {
+  Object.assign(job, patch, { updatedAt: Date.now() });
+  return job;
+}
+
+async function completeLocalJob(job, images) {
+  if (!images.length) throw new ApiError("标准图片接口没有返回图片", 0);
+  updateJob(job, {
+    status: "succeeded",
+    images,
+    error: "",
+    lastError: "",
+    nextAttemptAt: 0,
+    finishedAt: Date.now(),
+  });
+  await persistLocalJob(job);
+  await persistGalleryRecord(job);
+  showLatestResult(job);
+  renderQueue();
+  loadGallery();
+  els.previewStatus.textContent = "已完成";
+  els.previewStatus.className = "preview-status is-success";
+  setConnectionVisual("connected", "已连接");
+  showToast("图片生成完成");
+}
+
+function scheduleRetryTimer(job) {
+  const existing = state.retryTimers.get(job.id);
+  if (existing) window.clearTimeout(existing);
+  const delay = Math.max(0, (job.nextAttemptAt || Date.now()) - Date.now());
+  const timer = window.setTimeout(async () => {
+    state.retryTimers.delete(job.id);
+    if (job.status !== "retrying") return;
+    updateJob(job, { status: "queued", nextAttemptAt: 0 });
+    await persistLocalJob(job);
+    renderQueue();
+    pumpQueue();
+  }, delay);
+  state.retryTimers.set(job.id, timer);
+}
+
+async function failLocalJob(job, error) {
+  const message = friendlyError(error);
+  updateJob(job, { error: message, lastError: message });
+  if (isRetryableError(error) && job.attempts < job.maxAttempts) {
+    const retryIndex = Math.min(Math.max(job.attempts - 1, 0), RETRY_DELAYS.length - 1);
+    updateJob(job, {
+      status: "retrying",
+      nextAttemptAt: Date.now() + RETRY_DELAYS[retryIndex],
+    });
+    await persistLocalJob(job);
+    scheduleRetryTimer(job);
+    showToast(`${message}，${Math.ceil(RETRY_DELAYS[retryIndex] / 1000)} 秒后自动重试`);
+  } else {
+    updateJob(job, { status: "failed", finishedAt: Date.now(), nextAttemptAt: 0 });
+    await persistLocalJob(job);
+  }
+  renderQueue();
+  els.previewStatus.textContent = job.status === "retrying" ? "等待重试" : "任务失败";
+  els.previewStatus.className = "preview-status is-error";
+}
+
+async function runLocalJob(job) {
+  if (state.runningJobs.has(job.id) || job.status !== "queued") return;
+  if (job.remoteId) {
+    startPolling(job);
+    return;
+  }
+  state.runningJobs.add(job.id);
+  updateJob(job, {
+    status: "running",
+    attempts: (job.attempts || 0) + 1,
+    startedAt: Date.now(),
+    nextAttemptAt: 0,
+  });
+  try {
+    await persistLocalJob(job);
+    renderQueue();
+    const result = await submitRemoteTask(job.endpoint, jobPayload(job), job.files || []);
+    const response = result.response;
+    if (result.mode === "sync") {
+      await completeLocalJob(job, normalizeImages(response?.images || response?.data || []));
+      return;
+    }
+    job.remoteId = response?.id || response?.job_id || "";
+    if (!job.remoteId) throw new ApiError("接口没有返回任务 ID", 0);
+    updateJob(job, {
+      status: response.status || "queued",
+      error: response.error_message || "",
+      lastError: "",
+    });
+    await persistLocalJob(job);
+    renderQueue();
+    showToast("任务已提交到远程队列");
+    startPolling(job);
+  } catch (error) {
+    await failLocalJob(job, error);
+  } finally {
+    state.runningJobs.delete(job.id);
+    pumpQueue();
+  }
+}
+
+function scheduleRemotePoll(job, delay = POLL_INTERVAL) {
+  stopPolling(job.id);
+  const timer = window.setTimeout(() => {
+    state.pollers.delete(job.id);
+    startPolling(job);
+  }, delay);
+  state.pollers.set(job.id, timer);
+}
+
 function startPolling(job) {
   if (!job.remoteId || state.pollers.has(job.id)) return;
   const poll = async () => {
     try {
       const detail = await apiRequest(`/images/jobs/${encodeURIComponent(job.remoteId)}`);
-      job.status = detail.status || job.status;
-      job.error = detail.error_message || detail.error || "";
+      updateJob(job, {
+        status: detail.status || job.status,
+        error: detail.error_message || detail.error || "",
+      });
       if (job.status === "succeeded") {
-        job.images = normalizeImages(detail.images);
-        job.finishedAt = Date.now();
-        await persistJob(job);
-        showLatestResult(job);
-        els.previewStatus.textContent = "已完成";
-        els.previewStatus.className = "preview-status is-success";
-        renderQueue();
-        loadGallery();
+        await completeLocalJob(job, normalizeImages(detail.images || detail.data || []));
         stopPolling(job.id);
-        showToast("图片生成完成");
         return;
       }
       if (job.status === "failed") {
+        updateJob(job, {
+          finishedAt: Date.now(),
+          lastError: job.error,
+        });
+        await persistLocalJob(job);
         renderQueue();
         els.previewStatus.textContent = "任务失败";
         els.previewStatus.className = "preview-status is-error";
         stopPolling(job.id);
         return;
       }
+      await persistLocalJob(job);
       renderQueue();
-      state.pollers.set(job.id, window.setTimeout(poll, POLL_INTERVAL));
+      scheduleRemotePoll(job);
     } catch (error) {
-      job.status = "failed";
-      job.error = friendlyError(error);
+      if (isRetryableError(error)) {
+        updateJob(job, {
+          status: "retrying",
+          error: friendlyError(error),
+          lastError: friendlyError(error),
+          nextAttemptAt: Date.now() + POLL_INTERVAL,
+        });
+        await persistLocalJob(job);
+        renderQueue();
+        scheduleRemotePoll(job);
+        return;
+      }
+      updateJob(job, {
+        status: "failed",
+        error: friendlyError(error),
+        lastError: friendlyError(error),
+        finishedAt: Date.now(),
+      });
+      await persistLocalJob(job);
       renderQueue();
       els.previewStatus.textContent = "轮询失败";
       els.previewStatus.className = "preview-status is-error";
@@ -1227,9 +1402,47 @@ function stopPolling(jobId) {
   state.pollers.delete(jobId);
 }
 
+function pumpQueue() {
+  if (!state.config.baseUrl || !state.config.apiKey) return;
+  const available = MAX_CONCURRENT_JOBS - state.runningJobs.size;
+  if (available <= 0) return;
+  const now = Date.now();
+  [...state.jobs.values()]
+    .filter(
+      (job) =>
+        job.status === "queued" &&
+        !job.remoteId &&
+        !state.runningJobs.has(job.id) &&
+        (!job.nextAttemptAt || job.nextAttemptAt <= now),
+    )
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .slice(0, available)
+    .forEach((job) => {
+      void runLocalJob(job);
+    });
+}
+
+async function retryJob(jobId) {
+  const job = state.jobs.get(jobId);
+  if (!job || job.status !== "failed") return;
+  stopPolling(job.id);
+  updateJob(job, {
+    status: "queued",
+    attempts: 0,
+    nextAttemptAt: 0,
+    finishedAt: 0,
+    error: "",
+    lastError: "",
+    remoteId: "",
+  });
+  await persistLocalJob(job);
+  renderQueue();
+  pumpQueue();
+}
+
 function renderQueue() {
   const jobs = [...state.jobs.values()].sort((a, b) => b.createdAt - a.createdAt);
-  const activeCount = jobs.filter((job) => ["queued", "running"].includes(job.status)).length;
+  const activeCount = jobs.filter((job) => ["queued", "running", "retrying"].includes(job.status)).length;
   els.queueCount.textContent = String(activeCount);
   if (!jobs.length) {
     els.queueList.innerHTML = '<div class="empty-state">还没有任务，先配置一次生成吧。</div>';
@@ -1243,13 +1456,62 @@ function renderQueue() {
           <span class="queue-status ${escapeHtml(job.status)}">${escapeHtml(statusLabel(job.status))}</span>
           <div class="queue-copy">
             <strong title="${escapeHtml(job.prompt)}">${escapeHtml(job.prompt || "未命名任务")}</strong>
-            <small>${escapeHtml(endpointLabel(job.endpoint))} · ${escapeHtml(job.model)}${job.error ? ` · ${escapeHtml(job.error)}` : ""}</small>
+            <small>${escapeHtml(endpointLabel(job.endpoint))} · ${escapeHtml(job.model)}${job.attempts ? ` · 第 ${job.attempts}/${job.maxAttempts || MAX_JOB_ATTEMPTS} 次` : ""}${job.status === "retrying" && job.nextAttemptAt ? ` · ${Math.max(1, Math.ceil((job.nextAttemptAt - Date.now()) / 1000))} 秒后重试` : ""}${job.error ? ` · ${escapeHtml(job.error)}` : ""}</small>
           </div>
-          <span class="queue-time">${escapeHtml(formatTime(job.createdAt))}</span>
+          <div class="queue-actions">
+            ${job.status === "failed" ? `<button class="text-button queue-retry-button" type="button" data-retry-job="${escapeHtml(job.id)}">重试</button>` : ""}
+            <span class="queue-time">${escapeHtml(formatTime(job.createdAt))}</span>
+          </div>
         </article>
       `,
     )
     .join("");
+}
+
+async function loadLocalJobs() {
+  try {
+    const jobs = await readLocalJobs();
+    jobs.forEach((job) => {
+      job.maxAttempts = job.maxAttempts || MAX_JOB_ATTEMPTS;
+      job.attempts = Number(job.attempts) || 0;
+      job.files = job.files || [];
+      if (job.status === "running" && !job.remoteId) {
+        job.status = "queued";
+        job.nextAttemptAt = 0;
+      }
+      state.jobs.set(job.id, job);
+    });
+    const latest = jobs.find((job) => job.status === "succeeded" && job.images?.length);
+    if (latest) showLatestResult(latest);
+    renderQueue();
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function resumeLocalJobs() {
+  const now = Date.now();
+  for (const job of state.jobs.values()) {
+    if (job.remoteId && ["queued", "running"].includes(job.status)) {
+      startPolling(job);
+      continue;
+    }
+    if (job.remoteId && job.status === "retrying") {
+      scheduleRemotePoll(job, Math.max(POLL_INTERVAL, (job.nextAttemptAt || now) - now));
+      continue;
+    }
+    if (job.status === "retrying") {
+      if (job.nextAttemptAt && job.nextAttemptAt > now) scheduleRetryTimer(job);
+      else updateJob(job, { status: "queued", nextAttemptAt: 0 });
+    }
+  }
+  await Promise.all(
+    [...state.jobs.values()]
+      .filter((job) => job.status === "queued" || job.status === "retrying")
+      .map((job) => persistLocalJob(job)),
+  );
+  renderQueue();
+  pumpQueue();
 }
 
 async function refreshQueue({ silent = false } = {}) {
@@ -1261,9 +1523,9 @@ async function refreshQueue({ silent = false } = {}) {
   try {
     const payload = await apiRequest("/images/jobs?page=1&page_size=30");
     const remoteJobs = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
-    remoteJobs.forEach((remote) => {
+    for (const remote of remoteJobs) {
       const remoteId = remote.id || remote.job_id;
-      if (!remoteId) return;
+      if (!remoteId) continue;
       let local = [...state.jobs.values()].find((job) => job.remoteId === remoteId);
       if (!local) {
         local = {
@@ -1276,19 +1538,35 @@ async function refreshQueue({ silent = false } = {}) {
           size: remote.size || "auto",
           quality: remote.quality || "auto",
           count: remote.image_count || 1,
+          payload: {
+            model: remote.model || state.config.model,
+            prompt: remote.prompt || "远程任务",
+            n: remote.image_count || 1,
+            size: remote.size || "auto",
+            response_format: "b64_json",
+          },
+          files: [],
           status: remote.status || "queued",
+          attempts: 0,
+          maxAttempts: MAX_JOB_ATTEMPTS,
+          nextAttemptAt: 0,
           createdAt: remote.created_at ? new Date(remote.created_at * 1000).getTime() : Date.now(),
+          updatedAt: Date.now(),
           images: [],
           error: remote.error_message || "",
+          lastError: remote.error_message || "",
         };
         state.jobs.set(local.id, local);
       } else {
-        local.status = remote.status || local.status;
-        local.error = remote.error_message || local.error;
+        updateJob(local, {
+          status: remote.status || local.status,
+          error: remote.error_message || local.error,
+        });
       }
+      await persistLocalJob(local);
       if (["queued", "running"].includes(local.status)) startPolling(local);
       if (local.status === "succeeded" && !local.images.length) loadJobDetail(local);
-    });
+    }
     renderQueue();
   } catch (error) {
     if (!silent && !isUnsupportedEndpointError(error)) showToast(friendlyError(error));
@@ -1300,11 +1578,14 @@ async function refreshQueue({ silent = false } = {}) {
 async function loadJobDetail(job) {
   try {
     const detail = await apiRequest(`/images/jobs/${encodeURIComponent(job.remoteId)}?preview=1`);
-    job.status = detail.status || job.status;
-    job.images = normalizeImages(detail.images);
-    job.error = detail.error_message || job.error;
+    updateJob(job, {
+      status: detail.status || job.status,
+      images: normalizeImages(detail.images || detail.data || []),
+      error: detail.error_message || job.error,
+    });
     if (job.status === "succeeded" && job.images.length) {
-      await persistJob(job);
+      await persistLocalJob(job);
+      await persistGalleryRecord(job);
       if (!state.latestResult) showLatestResult(job);
     }
     renderQueue();
@@ -1359,6 +1640,11 @@ function openDatabase() {
         const store = db.createObjectStore(DB_STORE, { keyPath: "id" });
         store.createIndex("createdAt", "createdAt");
       }
+      if (!db.objectStoreNames.contains(DB_JOB_STORE)) {
+        const store = db.createObjectStore(DB_JOB_STORE, { keyPath: "id" });
+        store.createIndex("createdAt", "createdAt");
+        store.createIndex("status", "status");
+      }
     };
     request.onsuccess = () => {
       state.db = request.result;
@@ -1368,7 +1654,43 @@ function openDatabase() {
   });
 }
 
-async function persistJob(job) {
+async function persistLocalJob(job) {
+  const db = await openDatabase();
+  const { files = [], ...record } = job;
+  record.fileRecords = serializeJobFiles(files);
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_JOB_STORE, "readwrite");
+    tx.objectStore(DB_JOB_STORE).put(record);
+    tx.oncomplete = resolve;
+    tx.onerror = () => reject(tx.error || new Error("保存本地任务失败"));
+  });
+}
+
+async function readLocalJobs() {
+  const db = await openDatabase();
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(DB_JOB_STORE, "readonly").objectStore(DB_JOB_STORE).getAll();
+    request.onsuccess = () =>
+      resolve(
+        request.result
+          .map((record) => ({
+            ...record,
+            files: restoreJobFiles(record.fileRecords || []),
+            payload: record.payload || {
+              model: record.model,
+              prompt: record.prompt,
+              n: record.count || 1,
+              size: record.size || "auto",
+              response_format: "b64_json",
+            },
+          }))
+          .sort((a, b) => b.createdAt - a.createdAt),
+      );
+    request.onerror = () => reject(request.error || new Error("读取本地任务失败"));
+  });
+}
+
+async function persistGalleryRecord(job) {
   if (!job.images?.length) return;
   const db = await openDatabase();
   await new Promise((resolve, reject) => {
@@ -1550,6 +1872,11 @@ function bindEvents() {
         .catch((error) => showToast(error.message));
     }
   });
+  els.queueList.addEventListener("click", (event) => {
+    const retry = event.target.closest("[data-retry-job]");
+    if (!retry) return;
+    retryJob(retry.dataset.retryJob).catch((error) => showToast(error.message));
+  });
 
   [els.settingsDialog, els.lightboxDialog].forEach((dialog) => {
     dialog.addEventListener("click", (event) => {
@@ -1567,7 +1894,7 @@ async function bootstrap() {
   loadPromptOverrides();
   applyScene("generate");
   bindEvents();
-  renderQueue();
+  await loadLocalJobs();
   renderUploadPreview();
   await loadGallery();
 
@@ -1578,6 +1905,7 @@ async function bootstrap() {
     const connected = await verifyConnection();
     if (connected) await refreshQueue({ silent: true });
   }
+  await resumeLocalJobs();
 }
 
 bootstrap();
