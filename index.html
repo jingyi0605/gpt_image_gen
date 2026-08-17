@@ -8,24 +8,23 @@
       name="description"
       content="面向 gpt-image-2 的静态图片生成与编辑工作台。"
     />
-    <title>ImageFlow · GPT 图片工作台</title>
+    <title>GI ImageFlow · GPT 图片工作台</title>
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
     <div class="app-shell">
       <header class="topbar">
-        <a class="brand" href="#top" aria-label="ImageFlow 首页">
+        <a class="brand" href="#top" aria-label="GI ImageFlow 首页">
           <span class="brand-mark" aria-hidden="true">
             <span></span><span></span><span></span>
           </span>
           <span class="brand-copy">
-            <strong>ImageFlow</strong>
+            <strong>GI ImageFlow</strong>
             <small>GPT 图片工作台</small>
           </span>
         </a>
 
         <div class="topbar-meta">
-          <span id="embedBadge" class="meta-chip" hidden>SUB2API 嵌入</span>
           <button id="galleryButton" class="gallery-nav-button" type="button" role="tab" aria-selected="false" data-step-target="gallery" aria-controls="step-gallery" title="打开本地画廊">
             <span class="gallery-nav-icon" aria-hidden="true">▦</span>
             <span class="gallery-nav-label">画廊</span>
@@ -307,17 +306,12 @@
               <button id="connectionButton" class="secondary-button full-width" type="button">配置连接</button>
             </section>
 
-            <div class="privacy-note">
-              <span aria-hidden="true">◌</span>
-              <span>图片记录只写入当前浏览器的 IndexedDB，不上传到本页面的服务器。</span>
-            </div>
           </aside>
         </div>
       </main>
 
       <footer class="footer">
         <span>ImageFlow / 静态 Vercel 工作台</span>
-        <span>直接连接 OpenAI 兼容图片接口</span>
       </footer>
     </div>
 

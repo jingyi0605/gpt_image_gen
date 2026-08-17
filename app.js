@@ -162,7 +162,6 @@ const els = {
   configSourceValue: $("configSourceValue"),
   sub2apiAuthRow: $("sub2apiAuthRow"),
   sub2apiAuthValue: $("sub2apiAuthValue"),
-  embedBadge: $("embedBadge"),
   galleryButton: $("galleryButton"),
   galleryCount: $("galleryCount"),
   sceneHint: $("sceneHint"),
@@ -382,7 +381,6 @@ function readInitialConfig() {
   }
 
   if (sub2apiContext.embedded) {
-    els.embedBadge.hidden = false;
     if (config.source === "URL 参数") config.source = "URL 参数 / Sub2API";
   }
   return config;
