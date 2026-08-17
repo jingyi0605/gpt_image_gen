@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0d1729" />
+    <meta
+      name="description"
+      content="面向 gpt-image-2 的静态图片生成与编辑工作台。"
+    />
+    <title>ImageFlow · GPT 图片工作台</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#top" aria-label="ImageFlow 首页">
+          <span class="brand-mark" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </span>
+          <span class="brand-copy">
+            <strong>ImageFlow</strong>
+            <small>GPT 图片工作台</small>
+          </span>
+        </a>
+
+        <div class="topbar-meta">
+          <span id="embedBadge" class="meta-chip" hidden>SUB2API 嵌入</span>
+          <button id="galleryButton" class="gallery-nav-button" type="button" role="tab" aria-selected="false" data-step-target="gallery" aria-controls="step-gallery" title="打开本地画廊">
+            <span class="gallery-nav-icon" aria-hidden="true">▦</span>
+            <span class="gallery-nav-label">画廊</span>
+            <span id="galleryCount" class="gallery-nav-count">0</span>
+          </button>
+          <span id="connectionStatus" class="status-chip is-idle">
+            <i aria-hidden="true"></i>
+            未连接
+          </span>
+          <button id="settingsButton" class="icon-button" type="button" aria-label="打开连接设置" title="连接设置">
+            <span aria-hidden="true">⚙</span>
+          </button>
+        </div>
+      </header>
+
+      <main id="top" class="page-content">
+        <nav class="stepper" aria-label="创作步骤">
+          <button class="stepper-item is-active" type="button" data-step-target="scene">
+            <span class="step-number">01</span>
+            <span>
+              <strong>选择场景</strong>
+              <small>确定创作方向</small>
+            </span>
+          </button>
+          <span class="stepper-line" aria-hidden="true"></span>
+          <button class="stepper-item" type="button" data-step-target="workspace">
+            <span class="step-number">02</span>
+            <span>
+              <strong>配置任务</strong>
+              <small>补充素材和参数</small>
+            </span>
+          </button>
+          <span class="stepper-line" aria-hidden="true"></span>
+          <button class="stepper-item" type="button" data-step-target="queue">
+            <span class="step-number">03</span>
+            <span>
+              <strong>任务队列</strong>
+              <small>查看进行中的任务</small>
+            </span>
+          </button>
+        </nav>
+
+        <div class="content-grid">
+          <section class="main-column">
+            <section id="step-scene" class="step-panel is-visible" data-step-panel="scene">
+              <div class="panel-heading">
+                <div>
+                  <p class="panel-eyebrow">STEP 01</p>
+                  <h2>选择一个工作场景</h2>
+                </div>
+                <span class="panel-index">/ 03</span>
+              </div>
+
+              <div class="scene-grid">
+                <button class="scene-card" type="button" data-scene="document">
+                  <span class="scene-icon scene-icon-blue" aria-hidden="true">▤</span>
+                  <span class="scene-card-copy">
+                    <strong>文档修改</strong>
+                    <small>修正截图、表格和文档页，保留信息结构。</small>
+                  </span>
+                  <span class="scene-arrow" aria-hidden="true">↗</span>
+                </button>
+                <button class="scene-card" type="button" data-scene="poster">
+                  <span class="scene-icon scene-icon-pink" aria-hidden="true">✦</span>
+                  <span class="scene-card-copy">
+                    <strong>海报修改</strong>
+                    <small>替换文案、配色和视觉层级，保持主体明确。</small>
+                  </span>
+                  <span class="scene-arrow" aria-hidden="true">↗</span>
+                </button>
+                <button class="scene-card" type="button" data-scene="generate">
+                  <span class="scene-icon scene-icon-mint" aria-hidden="true">✺</span>
+                  <span class="scene-card-copy">
+                    <strong>图片生成</strong>
+                    <small>从一句描述开始，探索全新的视觉方向。</small>
+                  </span>
+                  <span class="scene-arrow" aria-hidden="true">↗</span>
+                </button>
+              </div>
+
+              <div class="scene-note">
+                <span class="note-dot" aria-hidden="true"></span>
+                <span id="sceneHint">点击场景卡片后会直接进入任务配置。</span>
+              </div>
+            </section>
+
+            <section id="step-workspace" class="step-panel" data-step-panel="workspace" hidden>
+              <div class="panel-heading">
+                <div>
+                  <p class="panel-eyebrow">STEP 02</p>
+                  <h2 id="workspaceTitle">配置图片生成任务</h2>
+                </div>
+                <span class="panel-index">/ 03</span>
+              </div>
+
+              <div id="editSourceBlock" class="source-block" hidden>
+                <div class="subheading-row">
+                  <div>
+                    <h3>上传参考图片</h3>
+                    <p>支持拖拽、文件选择和直接粘贴，最多 4 张。</p>
+                  </div>
+                  <button id="clearUploadsButton" class="text-button" type="button">清空</button>
+                </div>
+                <label id="dropzone" class="dropzone" for="imageInput">
+                  <input id="imageInput" type="file" accept="image/*" multiple />
+                  <span class="dropzone-symbol" aria-hidden="true">＋</span>
+                  <strong>拖拽图片到这里，或点击选择</strong>
+                  <small>也可以直接粘贴剪贴板中的图片</small>
+                  <div id="uploadPreview" class="upload-preview" aria-live="polite"></div>
+                </label>
+              </div>
+
+              <div class="prompt-block">
+                <div class="subheading-row">
+                  <div>
+                    <h3>提示词</h3>
+                    <p id="promptHint">先写清楚用户要修改或生成的内容，再按需应用右侧预置规则。</p>
+                  </div>
+                  <button id="resetPromptButton" class="text-button" type="button">恢复场景默认</button>
+                </div>
+                <div class="prompt-layout">
+                  <div class="prompt-column prompt-editor">
+                    <div class="prompt-column-heading">
+                      <div>
+                        <h4>用户操作</h4>
+                        <p>描述需要修改的具体区域、文字或生成目标。</p>
+                      </div>
+                      <span class="prompt-column-tag">可编辑</span>
+                    </div>
+                    <label class="sr-only" for="promptInput">用户操作</label>
+                    <textarea id="promptInput" rows="10" placeholder="例如：将标题改为……，仅修改指定区域，其余内容保持不变。"></textarea>
+                  </div>
+                  <div class="prompt-column prompt-presets">
+                    <div class="prompt-column-heading">
+                      <div>
+                        <h4>基本要求</h4>
+                        <p>选择预置项后立即生效，也可以直接修改内容。</p>
+                      </div>
+                      <span class="prompt-column-tag">可编辑</span>
+                    </div>
+                    <label class="field">
+                      <span>提示词分组</span>
+                      <select id="promptPresetGroup">
+                        <option value="document">扫描件修改</option>
+                        <option value="poster">海报修改</option>
+                        <option value="generate">图片生成</option>
+                      </select>
+                    </label>
+                    <label class="field">
+                      <span>预置项</span>
+                      <select id="promptPresetSelect"></select>
+                    </label>
+                    <div id="presetPreview" class="preset-preview">
+                      <span id="presetPreviewLabel">已应用 · 自动保存</span>
+                      <label class="sr-only" for="presetPromptInput">基本要求内容</label>
+                      <textarea id="presetPromptInput" rows="8" placeholder="可留空；留空后本次任务只使用用户操作。"></textarea>
+                    </div>
+                    <div class="preset-actions">
+                      <span id="presetSaveStatus" class="preset-save-status">修改会自动保存到本地</span>
+                      <button id="restorePresetButton" class="text-button" type="button">恢复预置默认</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-grid">
+                <label class="field">
+                  <span>图片尺寸（自动识别源图）</span>
+                  <select id="sizeInput">
+                    <option value="auto">自动适配源图</option>
+                    <option value="1024x1024">1024 × 1024</option>
+                    <option value="1536x1024">1536 × 1024</option>
+                    <option value="1024x1536">1024 × 1536</option>
+                    <option value="2048x2048">2048 × 2048</option>
+                    <option value="2048x1152">2048 × 1152</option>
+                    <option value="1152x2048">1152 × 2048</option>
+                  </select>
+                  <small id="sourceSizeHint" class="field-hint">生图场景将显式传递 size=auto。</small>
+                </label>
+                <label class="field">
+                  <span>质量</span>
+                  <select id="qualityInput">
+                    <option value="auto">自动</option>
+                    <option value="low">低</option>
+                    <option value="medium">标准</option>
+                    <option value="high">高</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>生成数量</span>
+                  <input id="countInput" type="number" min="1" max="4" value="1" inputmode="numeric" />
+                </label>
+              </div>
+
+              <div id="submitMessage" class="form-message" role="status" aria-live="polite"></div>
+              <div class="panel-actions panel-actions-split">
+                <button class="secondary-button" type="button" data-step-target="scene">← 返回场景</button>
+                <button id="submitButton" class="primary-button" type="button">
+                  <span id="submitButtonLabel">加入生成队列</span> <span aria-hidden="true">↗</span>
+                </button>
+              </div>
+            </section>
+
+            <section id="step-queue" class="step-panel" data-step-panel="queue" hidden>
+              <div class="panel-heading">
+                <div>
+                  <p class="panel-eyebrow">STEP 03 / QUEUE</p>
+                  <h2>任务队列</h2>
+                </div>
+                <button id="refreshQueueButton" class="text-button" type="button">刷新队列</button>
+              </div>
+              <div class="queue-summary">
+                <span>远程队列和当前标签页内的提交记录会显示在这里。</span>
+                <strong><span id="queueCount">0</span> 个进行中任务</strong>
+              </div>
+              <div id="queueList" class="queue-list" aria-live="polite"></div>
+            </section>
+
+            <section id="step-gallery" class="step-panel" data-step-panel="gallery" hidden>
+              <div class="panel-heading">
+                <div>
+                  <p class="panel-eyebrow">LOCAL GALLERY</p>
+                  <h2>本地画廊</h2>
+                </div>
+                <div class="panel-heading-actions">
+                  <span id="gallerySummary" class="panel-action-summary">0 张图片</span>
+                  <button id="clearGalleryButton" class="text-button danger-text-button" type="button">清空画廊</button>
+                </div>
+              </div>
+              <p class="gallery-description">生成结果只保存在当前浏览器的 IndexedDB 中，可单独删除或一次性清理。</p>
+              <div id="galleryGrid" class="gallery-grid"></div>
+            </section>
+          </section>
+
+          <aside class="side-column">
+            <section class="preview-card">
+              <div class="preview-heading">
+                <div>
+                  <p class="panel-eyebrow">LIVE OUTPUT</p>
+                  <h2>生成预览</h2>
+                </div>
+                <span id="previewStatus" class="preview-status">等待任务</span>
+              </div>
+              <div id="resultPreview" class="result-preview">
+                <div class="result-empty">
+                  <span class="result-orbit" aria-hidden="true"></span>
+                  <strong>结果会显示在这里</strong>
+                  <small>完成一次生成后，图片将自动保存到本地画廊。</small>
+                </div>
+              </div>
+              <div id="resultMeta" class="result-meta" hidden></div>
+            </section>
+
+            <section class="connection-card">
+              <div class="subheading-row">
+                <div>
+                  <p class="panel-eyebrow">CONNECTION</p>
+                  <h2>接口状态</h2>
+                </div>
+                <span id="connectionDot" class="connection-dot is-idle" aria-hidden="true"></span>
+              </div>
+              <dl class="connection-list">
+                <div>
+                  <dt>Base URL</dt>
+                  <dd id="baseUrlValue">未配置</dd>
+                </div>
+                <div>
+                  <dt>API Key</dt>
+                  <dd id="apiKeyValue">未配置</dd>
+                </div>
+                <div>
+                  <dt>来源</dt>
+                  <dd id="configSourceValue">等待配置</dd>
+                </div>
+                <div id="sub2apiAuthRow" hidden>
+                  <dt>Sub2API 登录</dt>
+                  <dd id="sub2apiAuthValue">未验证</dd>
+                </div>
+              </dl>
+              <button id="connectionButton" class="secondary-button full-width" type="button">配置连接</button>
+            </section>
+
+            <div class="privacy-note">
+              <span aria-hidden="true">◌</span>
+              <span>图片记录只写入当前浏览器的 IndexedDB，不上传到本页面的服务器。</span>
+            </div>
+          </aside>
+        </div>
+      </main>
+
+      <footer class="footer">
+        <span>ImageFlow / 静态 Vercel 工作台</span>
+        <span>直接连接 OpenAI 兼容图片接口</span>
+      </footer>
+    </div>
+
+    <dialog id="settingsDialog" class="settings-dialog">
+      <form id="settingsForm" method="dialog" class="dialog-card">
+        <div class="dialog-heading">
+          <div>
+            <p class="panel-eyebrow">CONNECTION SETTINGS</p>
+            <h2>连接你的图片接口</h2>
+          </div>
+          <button id="closeSettingsButton" class="icon-button" type="button" aria-label="关闭设置">×</button>
+        </div>
+        <p class="dialog-copy">嵌入 Sub2API 时会自动读取名为 image 的启用 Key；也支持 URL 参数注入和手动临时修改。手动填写的 API Key 只保存在当前标签页。</p>
+        <label class="field">
+          <span>Base URL</span>
+          <input id="baseUrlInput" type="url" placeholder="https://gpt222.solov.cc" autocomplete="url" required />
+        </label>
+        <label class="field">
+          <span>API Key</span>
+          <input id="apiKeyInput" type="password" placeholder="sk-…" autocomplete="off" required />
+        </label>
+        <label class="field">
+          <span>模型名称</span>
+          <input id="modelInput" type="text" placeholder="gpt-image-2" autocomplete="off" required />
+        </label>
+        <p id="settingsMessage" class="form-message" role="alert"></p>
+        <div class="dialog-actions">
+          <button id="cancelSettingsButton" class="secondary-button" type="button">取消</button>
+          <button class="primary-button" type="submit">保存连接</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="lightboxDialog" class="lightbox-dialog">
+      <button id="closeLightboxButton" class="lightbox-close" type="button" aria-label="关闭预览">×</button>
+      <img id="lightboxImage" src="" alt="生成结果大图" />
+      <div class="lightbox-actions">
+        <span id="lightboxCaption"></span>
+        <a id="downloadButton" class="secondary-button" href="#" download>下载图片</a>
+      </div>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="./app.js" defer></script>
+  </body>
+</html>
