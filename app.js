@@ -161,7 +161,6 @@ const els = {
   workspaceTitle: $("workspaceTitle"),
   promptHint: $("promptHint"),
   promptInput: $("promptInput"),
-  promptPresetGroup: $("promptPresetGroup"),
   promptPresetSelect: $("promptPresetSelect"),
   presetPreview: $("presetPreview"),
   presetPreviewLabel: $("presetPreviewLabel"),
@@ -741,7 +740,6 @@ function renderPromptPresetOptions(groupId, selectedId = "") {
   const resolvedGroupId = PROMPT_GROUPS[groupId] ? groupId : "generate";
   const group = PROMPT_GROUPS[resolvedGroupId];
   const nextId = group.presets.some((preset) => preset.id === selectedId) ? selectedId : group.defaultId || "blank";
-  els.promptPresetGroup.value = resolvedGroupId;
   els.promptPresetSelect.innerHTML = group.presets
     .map((preset) => `<option value="${escapeHtml(preset.id)}">${escapeHtml(preset.label)}</option>`)
     .join("");
@@ -750,7 +748,7 @@ function renderPromptPresetOptions(groupId, selectedId = "") {
 }
 
 function renderPresetPreview() {
-  const groupId = els.promptPresetGroup.value;
+  const groupId = state.scene;
   const preset = getPromptPreset(groupId, els.promptPresetSelect.value);
   state.appliedPreset = { groupId, presetId: preset.id, label: preset.label, prompt: preset.prompt };
   els.presetPromptInput.value = preset.prompt;
@@ -759,7 +757,7 @@ function renderPresetPreview() {
 }
 
 function updatePresetPrompt(event) {
-  const groupId = els.promptPresetGroup.value;
+  const groupId = state.scene;
   const presetId = els.promptPresetSelect.value;
   const basePreset = getBasePromptPreset(groupId, presetId);
   const value = event.target.value;
@@ -775,7 +773,7 @@ function updatePresetPrompt(event) {
 }
 
 function restoreSelectedPreset() {
-  const groupId = els.promptPresetGroup.value;
+  const groupId = state.scene;
   const presetId = els.promptPresetSelect.value;
   const key = `${groupId}.${presetId}`;
   delete state.promptOverrides[key];
@@ -794,7 +792,6 @@ function applyScene(scene) {
   els.sceneHint.textContent = config.hint;
   els.workspaceTitle.textContent = config.title;
   els.promptHint.textContent = config.hint;
-  els.promptPresetGroup.value = scene;
   renderPromptPresetOptions(scene, config.defaultPresetId);
   els.promptInput.value = "";
   setMessage(els.submitMessage, "");
@@ -806,7 +803,6 @@ function applyScene(scene) {
 
 function resetPrompt() {
   const config = SCENES[state.scene];
-  els.promptPresetGroup.value = state.scene;
   renderPromptPresetOptions(state.scene, config.defaultPresetId);
   els.promptInput.value = "";
   setMessage(els.submitMessage, "");
@@ -1489,9 +1485,6 @@ function bindEvents() {
     button.addEventListener("click", () => goToStep(button.dataset.stepTarget));
   });
   els.resetPromptButton.addEventListener("click", resetPrompt);
-  els.promptPresetGroup.addEventListener("change", () => {
-    renderPromptPresetOptions(els.promptPresetGroup.value);
-  });
   els.promptPresetSelect.addEventListener("change", renderPresetPreview);
   els.presetPromptInput.addEventListener("input", updatePresetPrompt);
   els.restorePresetButton.addEventListener("click", restoreSelectedPreset);

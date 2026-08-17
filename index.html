@@ -150,30 +150,21 @@
                   <div class="prompt-column prompt-editor">
                     <div class="prompt-column-heading">
                       <div>
-                        <h4>用户操作</h4>
+                        <h4>用户要求</h4>
                         <p>描述需要修改的具体区域、文字或生成目标。</p>
                       </div>
                       <span class="prompt-column-tag">可编辑</span>
                     </div>
-                    <label class="sr-only" for="promptInput">用户操作</label>
+                    <label class="sr-only" for="promptInput">用户要求</label>
                     <textarea id="promptInput" rows="10" placeholder="例如：将标题改为……，仅修改指定区域，其余内容保持不变。"></textarea>
                   </div>
                   <div class="prompt-column prompt-presets">
                     <div class="prompt-column-heading">
                       <div>
                         <h4>基本要求</h4>
-                        <p>选择预置项后立即生效，也可以直接修改内容。</p>
                       </div>
                       <span class="prompt-column-tag">可编辑</span>
                     </div>
-                    <label class="field">
-                      <span>提示词分组</span>
-                      <select id="promptPresetGroup">
-                        <option value="document">扫描件修改</option>
-                        <option value="poster">海报修改</option>
-                        <option value="generate">图片生成</option>
-                      </select>
-                    </label>
                     <label class="field">
                       <span>预置项</span>
                       <select id="promptPresetSelect"></select>
@@ -181,7 +172,7 @@
                     <div id="presetPreview" class="preset-preview">
                       <span id="presetPreviewLabel">已应用 · 自动保存</span>
                       <label class="sr-only" for="presetPromptInput">基本要求内容</label>
-                      <textarea id="presetPromptInput" rows="8" placeholder="可留空；留空后本次任务只使用用户操作。"></textarea>
+                      <textarea id="presetPromptInput" rows="8" placeholder="可留空；留空后本次任务只使用用户要求。"></textarea>
                     </div>
                     <div class="preset-actions">
                       <span id="presetSaveStatus" class="preset-save-status">修改会自动保存到本地</span>
