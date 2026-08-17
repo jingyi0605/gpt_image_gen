@@ -109,6 +109,7 @@ const PROMPT_GROUPS = {
 
 const SCENES = {
   document: {
+    label: "文档修改",
     title: "配置文档修改任务",
     hint: "说明要修正的内容，模型会尽量保留原有结构和信息层级。",
     prompt: PROMPT_GROUPS.document.presets.find((preset) => preset.id === "scan-local-edit").prompt,
@@ -116,6 +117,7 @@ const SCENES = {
     endpoint: "edits",
   },
   poster: {
+    label: "海报修改",
     title: "配置海报修改任务",
     hint: "说明需要替换的文案、风格或视觉层级，保留主体和核心信息。",
     prompt: PROMPT_GROUPS.poster.presets.find((preset) => preset.id === "poster-copy").prompt,
@@ -123,6 +125,7 @@ const SCENES = {
     endpoint: "edits",
   },
   generate: {
+    label: "图片生成",
     title: "配置图片生成任务",
     hint: "描述画面、主体、风格、光线和构图，提示词可以随时修改。",
     prompt: PROMPT_GROUPS.generate.presets.find((preset) => preset.id === "product-hero").prompt,
@@ -174,6 +177,10 @@ const els = {
   restorePresetButton: $("restorePresetButton"),
   resetPromptButton: $("resetPromptButton"),
   editSourceBlock: $("editSourceBlock"),
+  continuationBanner: $("continuationBanner"),
+  continuationTitle: $("continuationTitle"),
+  continuationMeta: $("continuationMeta"),
+  cancelContinuationButton: $("cancelContinuationButton"),
   dropzone: $("dropzone"),
   imageInput: $("imageInput"),
   uploadPreview: $("uploadPreview"),
@@ -224,6 +231,7 @@ const state = {
   appliedPreset: null,
   promptOverrides: {},
   files: [],
+  continuation: null,
   fileDimensions: new WeakMap(),
   fileDimensionPromises: new WeakMap(),
   lastSourceSize: null,
@@ -605,6 +613,15 @@ function endpointLabel(endpoint) {
   return endpoint === "edits" ? "图片编辑" : "图片生成";
 }
 
+function sceneLabel(scene) {
+  return SCENES[scene]?.label || "图片编辑";
+}
+
+function getActiveEndpoint() {
+  // 继续编辑保留原场景，但必须使用编辑接口提交已生成的图片。
+  return state.continuation ? "edits" : SCENES[state.scene]?.endpoint || "generations";
+}
+
 function statusLabel(status) {
   return STATUS_LABELS[status] || status || "等待中";
 }
@@ -766,6 +783,17 @@ function renderPresetPreview() {
   els.presetSaveStatus.textContent = "选择即生效，修改自动保存到本地";
 }
 
+function syncWorkspaceControls() {
+  const isEditing = getActiveEndpoint() === "edits";
+  els.editSourceBlock.hidden = !isEditing;
+  els.submitButtonLabel.textContent = isEditing ? "加入编辑队列" : "加入生成队列";
+  const continuation = state.continuation;
+  els.continuationBanner.hidden = !continuation;
+  if (!continuation) return;
+  els.continuationTitle.textContent = `继续编辑 · ${sceneLabel(continuation.scene)}`;
+  els.continuationMeta.textContent = continuation.sourceLabel || "已载入上一轮结果";
+}
+
 function updatePresetPrompt(event) {
   const groupId = state.scene;
   const presetId = els.promptPresetSelect.value;
@@ -792,8 +820,9 @@ function restoreSelectedPreset() {
   setMessage(els.submitMessage, "已恢复当前预置项的内置内容", "success");
 }
 
-function applyScene(scene) {
+function applyScene(scene, { preserveContinuation = false } = {}) {
   if (!SCENES[scene]) return;
+  if (!preserveContinuation) state.continuation = null;
   state.scene = scene;
   const config = SCENES[scene];
   document.querySelectorAll("[data-scene]").forEach((card) => {
@@ -808,7 +837,8 @@ function applyScene(scene) {
   els.editSourceBlock.hidden = config.endpoint !== "edits";
   els.submitButtonLabel.textContent = config.endpoint === "edits" ? "加入编辑队列" : "加入生成队列";
   updateSourceSizeHint();
-  if (config.endpoint === "generations" && state.files.length) clearUploads();
+  if (!preserveContinuation && config.endpoint === "generations" && state.files.length) clearUploads({ keepContinuation: true });
+  syncWorkspaceControls();
 }
 
 function resetPrompt() {
@@ -823,6 +853,45 @@ function getFilePreview(file) {
     Object.defineProperty(file, "__imageFlowPreview", { value: URL.createObjectURL(file), configurable: true });
   }
   return file.__imageFlowPreview;
+}
+
+function decodeBase64Blob(value, mimeType) {
+  const binary = atob(String(value || "").replace(/\s/g, ""));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return new Blob([bytes], { type: mimeType });
+}
+
+function decodeDataUrl(source, fallbackMimeType = "image/png") {
+  const match = String(source || "").match(/^data:([^,]*),(.*)$/s);
+  if (!match) return null;
+  const metadata = match[1] || "";
+  const mimeType = metadata.split(";")[0] || fallbackMimeType;
+  if (metadata.includes(";base64")) return decodeBase64Blob(match[2], mimeType);
+  return new Blob([decodeURIComponent(match[2])], { type: mimeType });
+}
+
+async function imageToFile(image, index = 0) {
+  const fallbackMimeType = image?.mimeType || "image/png";
+  const encoded = String(image?.b64Json || "");
+  let blob = encoded
+    ? encoded.startsWith("data:")
+      ? decodeDataUrl(encoded, fallbackMimeType)
+      : decodeBase64Blob(encoded, fallbackMimeType)
+    : decodeDataUrl(image?.source, fallbackMimeType);
+  if (!blob && image?.source) {
+    const response = await fetch(image.source);
+    if (!response.ok) throw new Error("无法读取画廊中的图片");
+    blob = await response.blob();
+  }
+  if (!blob || !blob.size) throw new Error("画廊记录中没有可编辑的图片数据");
+  if (blob.size > MAX_FILE_SIZE) throw new Error("图片超过 20 MB，无法作为编辑项载入");
+  const mimeType = blob.type || fallbackMimeType;
+  const extension = mimeType.split("/")[1]?.replace(/[^a-z0-9]/gi, "") || "png";
+  return new File([blob], `imageflow-edit-${Date.now()}-${index + 1}.${extension}`, {
+    type: mimeType,
+    lastModified: Date.now(),
+  });
 }
 
 function readImageDimensions(file) {
@@ -951,21 +1020,37 @@ function acceptFiles(fileList) {
   });
 }
 
-function clearUploads() {
+function replaceUploads(files) {
+  state.files.forEach(revokeFilePreview);
+  state.files = files.filter(Boolean).slice(0, MAX_FILES);
+  els.imageInput.value = "";
+  renderUploadPreview();
+  state.files.forEach((file) => {
+    ensureFileDimensions(file)
+      .then(() => renderUploadPreview())
+      .catch((error) => showToast(error.message));
+  });
+}
+
+function clearUploads({ keepContinuation = false } = {}) {
   state.files.forEach(revokeFilePreview);
   state.files = [];
+  if (!keepContinuation) state.continuation = null;
   state.lastSourceSize = null;
   els.imageInput.value = "";
   updateSourceSizeHint();
   renderUploadPreview();
+  syncWorkspaceControls();
 }
 
 function removeUpload(index) {
   const [file] = state.files.splice(index, 1);
   revokeFilePreview(file);
+  if (!state.files.length && state.continuation) state.continuation = null;
   state.lastSourceSize = null;
   updateSourceSizeHint();
   renderUploadPreview();
+  syncWorkspaceControls();
 }
 
 function renderUploadPreview() {
@@ -988,6 +1073,41 @@ function renderUploadPreview() {
     .join("");
 }
 
+function resolveRecordScene(record) {
+  if (SCENES[record?.scene]) return record.scene;
+  return record?.endpoint === "edits" ? "document" : "generate";
+}
+
+function truncateText(value, maxLength = 42) {
+  const text = String(value || "").trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+async function continueEditingFromImage({ record, image, imageIndex = 0, sourceId = "" }) {
+  const scene = resolveRecordScene(record);
+  try {
+    const file = await imageToFile(image, imageIndex);
+    state.continuation = {
+      scene,
+      sourceId,
+      imageIndex,
+      sourceLabel: `${sceneLabel(scene)} · ${truncateText(record?.prompt || "上一轮结果")}`,
+    };
+    applyScene(scene, { preserveContinuation: true });
+    replaceUploads([file]);
+    setMessage(els.submitMessage, "已载入上一轮图片，请补充本轮修改要求", "success");
+    goToStep("workspace");
+    showToast("图片已载入，可继续编辑");
+  } catch (error) {
+    showToast(error.message || "无法载入图片");
+  }
+}
+
+function cancelContinuation() {
+  clearUploads();
+  setMessage(els.submitMessage, "已取消继续编辑", "success");
+}
+
 async function buildPayload() {
   const userOperation = els.promptInput.value.trim();
   const prompt = [state.appliedPreset?.prompt, userOperation].filter(Boolean).join("\n\n").trim();
@@ -999,7 +1119,7 @@ async function buildPayload() {
     response_format: "b64_json",
   };
   if (els.sizeInput.value === "auto") {
-    if (SCENES[state.scene].endpoint === "edits" && state.files.length) {
+    if (getActiveEndpoint() === "edits" && state.files.length) {
       const dimensions = await ensureFileDimensions(state.files[0]);
       state.lastSourceSize = inferSourceSize(dimensions);
       payload.size = state.lastSourceSize.size;
@@ -1084,7 +1204,7 @@ function createLocalJob(payload) {
   return {
     id: createId("local"),
     remoteId: "",
-    endpoint: SCENES[state.scene].endpoint,
+    endpoint: getActiveEndpoint(),
     model: state.config.model,
     scene: state.scene,
     payload: { ...payload },
@@ -1117,7 +1237,7 @@ async function submitJob() {
     setMessage(els.submitMessage, "请输入提示词", "error");
     return;
   }
-  const endpoint = SCENES[state.scene].endpoint;
+  const endpoint = getActiveEndpoint();
   if (endpoint === "edits" && !state.files.length) {
     setMessage(els.submitMessage, "请先上传至少一张参考图片", "error");
     return;
@@ -1606,14 +1726,18 @@ function showLatestResult(job) {
   els.resultPreview.innerHTML = `<div class="result-image-grid">${images
     .map(
       (image, index) => `
-        <button class="result-image-button" type="button" data-preview-source="${escapeHtml(image.source)}" data-preview-caption="${escapeHtml(job.prompt)} · ${index + 1}">
-          <img src="${escapeHtml(image.source)}" alt="生成结果 ${index + 1}" loading="lazy" />
-        </button>
+        <div class="result-image-item">
+          <button class="result-image-button" type="button" data-preview-source="${escapeHtml(image.source)}" data-preview-caption="${escapeHtml(job.prompt)} · ${index + 1}">
+            <img src="${escapeHtml(image.source)}" alt="生成结果 ${index + 1}" loading="lazy" />
+          </button>
+          <button class="result-continue-button" type="button" data-continue-edit-job="${escapeHtml(job.id)}" data-continue-edit-index="${index}">继续编辑</button>
+        </div>
       `,
     )
     .join("")}</div>`;
   els.resultMeta.hidden = false;
   els.resultMeta.innerHTML = [
+    `<span>${escapeHtml(sceneLabel(resolveRecordScene(job)))}</span>`,
     `<span>${escapeHtml(endpointLabel(job.endpoint))}</span>`,
     `<span>${escapeHtml(job.model)}</span>`,
     `<span>${images.length} 张</span>`,
@@ -1780,8 +1904,9 @@ function renderGallery() {
           </button>
           <div class="gallery-card-body">
             <strong title="${escapeHtml(record.prompt)}">${escapeHtml(record.prompt || "未命名任务")}</strong>
-            <small>${escapeHtml(endpointLabel(record.endpoint))} · ${escapeHtml(formatTime(record.createdAt))}</small>
+            <small>${escapeHtml(sceneLabel(resolveRecordScene(record)))} · ${escapeHtml(formatTime(record.createdAt))}</small>
             <div class="gallery-card-actions">
+              <button type="button" data-continue-edit-record="${escapeHtml(record.id)}" data-continue-edit-index="${index}">继续编辑</button>
               <button type="button" data-delete-record="${escapeHtml(record.id)}">删除</button>
               <a href="${escapeHtml(image.source)}" download="imageflow-${escapeHtml(record.id)}-${index + 1}.png">下载</a>
             </div>
@@ -1821,6 +1946,7 @@ function bindEvents() {
   els.cancelSettingsButton.addEventListener("click", () => closeDialog(els.settingsDialog));
   els.settingsForm.addEventListener("submit", commitSettings);
   els.closeLightboxButton.addEventListener("click", () => closeDialog(els.lightboxDialog));
+  els.cancelContinuationButton.addEventListener("click", cancelContinuation);
   els.imageInput.addEventListener("change", (event) => acceptFiles(event.target.files));
   els.clearUploadsButton.addEventListener("click", clearUploads);
 
@@ -1856,10 +1982,38 @@ function bindEvents() {
     }
   });
   els.resultPreview.addEventListener("click", (event) => {
+    const continueButton = event.target.closest("[data-continue-edit-job]");
+    if (continueButton) {
+      const job = state.jobs.get(continueButton.dataset.continueEditJob);
+      const imageIndex = Number(continueButton.dataset.continueEditIndex);
+      if (job?.images?.[imageIndex]) {
+        void continueEditingFromImage({
+          record: job,
+          image: job.images[imageIndex],
+          imageIndex,
+          sourceId: job.id,
+        });
+      }
+      return;
+    }
     const target = event.target.closest("[data-preview-source]");
     if (target) openLightbox(target.dataset.previewSource, target.dataset.previewCaption);
   });
   els.galleryGrid.addEventListener("click", (event) => {
+    const continueButton = event.target.closest("[data-continue-edit-record]");
+    if (continueButton) {
+      const record = state.galleryRecords.find((item) => String(item.id) === continueButton.dataset.continueEditRecord);
+      const imageIndex = Number(continueButton.dataset.continueEditIndex);
+      if (record?.images?.[imageIndex]) {
+        void continueEditingFromImage({
+          record,
+          image: record.images[imageIndex],
+          imageIndex,
+          sourceId: record.id,
+        });
+      }
+      return;
+    }
     const preview = event.target.closest("[data-preview-source]");
     if (preview) {
       openLightbox(preview.dataset.previewSource, preview.dataset.previewCaption);
