@@ -634,6 +634,10 @@ img {
   width: 100%;
 }
 
+.connection-help-button {
+  margin-top: 8px;
+}
+
 .source-block,
 .prompt-block {
   margin-bottom: 18px;
@@ -1429,7 +1433,18 @@ input:focus {
   box-shadow: 0 26px 90px rgba(13, 23, 41, 0.22);
 }
 
+.help-dialog {
+  width: min(980px, calc(100% - 24px));
+  max-height: calc(100vh - 24px);
+  padding: 0;
+  border: 0;
+  border-radius: 18px;
+  background: transparent;
+  box-shadow: 0 26px 90px rgba(13, 23, 41, 0.22);
+}
+
 .settings-dialog::backdrop,
+.help-dialog::backdrop,
 .lightbox-dialog::backdrop {
   background: rgba(13, 23, 41, 0.48);
   backdrop-filter: blur(5px);
@@ -1458,6 +1473,161 @@ input:focus {
   color: var(--ink-muted);
   font-size: 12px;
   line-height: 1.65;
+}
+
+.help-dialog-card {
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  padding: 25px;
+}
+
+.help-step {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-soft);
+}
+
+.help-step-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+}
+
+.help-step-number {
+  display: inline-grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  background: var(--blue-soft);
+  color: var(--blue);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.help-step-heading h3 {
+  margin: 1px 0 4px;
+  font-size: 16px;
+}
+
+.help-step-heading p,
+.help-method p {
+  margin: 0;
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+.help-figure {
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  margin: 0;
+}
+
+.help-figure img {
+  display: block;
+  width: 100%;
+  max-height: min(58vh, 720px);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  object-fit: contain;
+}
+
+.help-figure figcaption {
+  color: var(--ink-soft);
+  font-size: 10px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.help-methods {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.help-method {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+
+.help-method-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.help-method-heading h4 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.help-method-badge {
+  flex: 0 0 auto;
+  padding: 4px 6px;
+  border-radius: 6px;
+  background: var(--mint-soft);
+  color: var(--mint);
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.help-link {
+  color: var(--blue);
+  overflow-wrap: anywhere;
+}
+
+.help-link:hover {
+  color: #195fc1;
+  text-decoration: underline;
+}
+
+.help-config-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--panel-soft);
+  list-style: none;
+}
+
+.help-config-list li {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  color: var(--ink-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.help-config-list li > span {
+  color: var(--ink-soft);
+}
+
+.help-config-list code,
+.help-config-list strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 650;
 }
 
 .dialog-actions {
@@ -1686,6 +1856,25 @@ input:focus {
 
   .side-column {
     grid-template-columns: 1fr;
+  }
+
+  .help-dialog {
+    width: calc(100% - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .help-dialog-card {
+    max-height: calc(100vh - 16px);
+    padding: 18px;
+  }
+
+  .help-methods {
+    grid-template-columns: 1fr;
+  }
+
+  .help-config-list li {
+    grid-template-columns: 1fr;
+    gap: 2px;
   }
 
   .preview-card {

@@ -148,11 +148,14 @@ const els = {
   connectionStatus: $("connectionStatus"),
   connectionDot: $("connectionDot"),
   connectionButton: $("connectionButton"),
+  helpButton: $("helpButton"),
   settingsButton: $("settingsButton"),
   settingsDialog: $("settingsDialog"),
   settingsForm: $("settingsForm"),
   closeSettingsButton: $("closeSettingsButton"),
   cancelSettingsButton: $("cancelSettingsButton"),
+  helpDialog: $("helpDialog"),
+  closeHelpButton: $("closeHelpButton"),
   baseUrlInput: $("baseUrlInput"),
   apiKeyInput: $("apiKeyInput"),
   modelInput: $("modelInput"),
@@ -679,6 +682,11 @@ function openSettings() {
   els.modelInput.value = state.config.model;
   openDialog(els.settingsDialog);
   window.setTimeout(() => els.baseUrlInput.focus(), 0);
+}
+
+function openHelp() {
+  openDialog(els.helpDialog);
+  window.setTimeout(() => els.closeHelpButton.focus(), 0);
 }
 
 function commitSettings(event) {
@@ -1908,8 +1916,10 @@ function bindEvents() {
   });
   els.settingsButton.addEventListener("click", openSettings);
   els.connectionButton.addEventListener("click", openSettings);
+  els.helpButton.addEventListener("click", openHelp);
   els.closeSettingsButton.addEventListener("click", () => closeDialog(els.settingsDialog));
   els.cancelSettingsButton.addEventListener("click", () => closeDialog(els.settingsDialog));
+  els.closeHelpButton.addEventListener("click", () => closeDialog(els.helpDialog));
   els.settingsForm.addEventListener("submit", commitSettings);
   els.closeLightboxButton.addEventListener("click", () => closeDialog(els.lightboxDialog));
   els.cancelContinuationButton.addEventListener("click", cancelContinuation);
@@ -1998,7 +2008,7 @@ function bindEvents() {
     retryJob(retry.dataset.retryJob).catch((error) => showToast(error.message));
   });
 
-  [els.settingsDialog, els.lightboxDialog].forEach((dialog) => {
+  [els.settingsDialog, els.helpDialog, els.lightboxDialog].forEach((dialog) => {
     dialog.addEventListener("click", (event) => {
       if (event.target === dialog) closeDialog(dialog);
     });

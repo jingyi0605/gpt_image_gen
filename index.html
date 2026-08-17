@@ -289,6 +289,7 @@
                 </div>
               </dl>
               <button id="connectionButton" class="secondary-button full-width" type="button">配置连接</button>
+              <button id="helpButton" class="secondary-button full-width connection-help-button" type="button">配置帮助</button>
             </section>
 
           </aside>
@@ -328,6 +329,75 @@
           <button class="primary-button" type="submit">保存连接</button>
         </div>
       </form>
+    </dialog>
+
+    <dialog id="helpDialog" class="help-dialog" aria-labelledby="helpDialogTitle">
+      <article class="dialog-card help-dialog-card">
+        <div class="dialog-heading">
+          <div>
+            <p class="panel-eyebrow">CONFIGURATION HELP</p>
+            <h2 id="helpDialogTitle">配置帮助</h2>
+          </div>
+          <button id="closeHelpButton" class="icon-button" type="button" aria-label="关闭配置帮助">×</button>
+        </div>
+        <p class="dialog-copy">按以下步骤创建图片接口密钥，并选择一种方式打开图片处理工作台。</p>
+
+        <section class="help-step" aria-labelledby="helpStepOneTitle">
+          <div class="help-step-heading">
+            <span class="help-step-number" aria-hidden="true">1</span>
+            <div>
+              <h3 id="helpStepOneTitle">创建 APIKEY</h3>
+              <p>在 API 平台创建名称为“image”的 APIKEY，分组为“image”。</p>
+            </div>
+          </div>
+          <figure class="help-figure">
+            <img src="./assets/connection-help/api-key.png" alt="创建密钥页面，名称和分组均设置为 image" />
+            <figcaption>名称填写 image，分组选择 image。</figcaption>
+          </figure>
+        </section>
+
+        <section class="help-step" aria-labelledby="helpStepTwoTitle">
+          <div class="help-step-heading">
+            <span class="help-step-number" aria-hidden="true">2</span>
+            <div>
+              <h3 id="helpStepTwoTitle">选择一种打开方式</h3>
+              <p>完成步骤 1 后，可以直接从 API 平台进入，也可以访问独立的图片处理站点。</p>
+            </div>
+          </div>
+          <div class="help-methods">
+            <article class="help-method">
+              <div class="help-method-heading">
+                <span class="help-method-badge">方式 1</span>
+                <h4>从 API 平台直接打开</h4>
+              </div>
+              <p>通过 API 平台导航菜单直接打开“图片处理”。</p>
+              <figure class="help-figure">
+                <img src="./assets/connection-help/image-processing-nav.png" alt="API 平台导航菜单中的图片处理入口" />
+                <figcaption>在左侧导航中选择图片处理。</figcaption>
+              </figure>
+            </article>
+
+            <article class="help-method">
+              <div class="help-method-heading">
+                <span class="help-method-badge">方式 2</span>
+                <h4>访问独立图片处理站点</h4>
+              </div>
+              <p>
+                访问
+                <a class="help-link" href="https://image.glor-ai.top" target="_blank" rel="noreferrer">https://image.glor-ai.top</a>，在配置连接中输入：
+              </p>
+              <ul class="help-config-list">
+                <li><span>Base URL</span><code>https://api.glor-ai.top:1443</code></li>
+                <li><span>API Key</span><strong>步骤 1 创建的 APIKEY</strong></li>
+              </ul>
+              <figure class="help-figure">
+                <img src="./assets/connection-help/connection-settings.png" alt="图片处理站点的连接设置，填写 Base URL 和 API Key" />
+                <figcaption>Base URL 使用 https://api.glor-ai.top:1443。</figcaption>
+              </figure>
+            </article>
+          </div>
+        </section>
+      </article>
     </dialog>
 
     <dialog id="lightboxDialog" class="lightbox-dialog">
