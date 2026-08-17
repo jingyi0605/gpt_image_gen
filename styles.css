@@ -1085,6 +1085,10 @@ input:focus {
   padding: 8px;
 }
 
+.result-image-grid.is-single {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .result-image-item {
   display: grid;
   min-width: 0;

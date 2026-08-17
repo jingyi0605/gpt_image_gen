@@ -1654,7 +1654,8 @@ function showLatestResult(job) {
     els.resultMeta.hidden = true;
     return;
   }
-  els.resultPreview.innerHTML = `<div class="result-image-grid">${images
+  const gridClass = images.length === 1 ? "result-image-grid is-single" : "result-image-grid";
+  els.resultPreview.innerHTML = `<div class="${gridClass}">${images
     .map(
       (image, index) => `
         <div class="result-image-item">
