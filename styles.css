@@ -1522,6 +1522,14 @@ input:focus {
   line-height: 1.65;
 }
 
+.help-requirement {
+  display: block;
+  margin-top: 5px;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .help-figure {
   display: grid;
   justify-items: center;
@@ -1537,6 +1545,10 @@ input:focus {
   border-radius: 10px;
   background: #fff;
   object-fit: contain;
+}
+
+.help-step-one-figure img {
+  width: 50%;
 }
 
 .help-figure figcaption {
