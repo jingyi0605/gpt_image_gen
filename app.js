@@ -847,6 +847,39 @@ function decodeDataUrl(source, fallbackMimeType = "image/png") {
   return new Blob([decodeURIComponent(match[2])], { type: mimeType });
 }
 
+async function detectImageMimeType(blob) {
+  try {
+    const bytes = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+    const text = (offset, length) => String.fromCharCode(...bytes.slice(offset, offset + length));
+    if (bytes.length >= 8 && [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a].every((value, index) => bytes[index] === value)) {
+      return "image/png";
+    }
+    if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+    if (bytes.length >= 6 && ["GIF87a", "GIF89a"].includes(text(0, 6))) return "image/gif";
+    if (bytes.length >= 12 && text(0, 4) === "RIFF" && text(8, 4) === "WEBP") return "image/webp";
+    if (bytes.length >= 2 && text(0, 2) === "BM") return "image/bmp";
+    if (bytes.length >= 4 && (text(0, 4) === "II*\u0000" || text(0, 4) === "MM\u0000*")) return "image/tiff";
+  } catch {
+    // 读取文件头失败时继续使用接口声明的类型，避免阻断继续编辑。
+  }
+  return "";
+}
+
+function imageExtension(mimeType) {
+  return (
+    {
+      "image/jpeg": "jpg",
+      "image/png": "png",
+      "image/webp": "webp",
+      "image/gif": "gif",
+      "image/bmp": "bmp",
+      "image/tiff": "tif",
+    }[String(mimeType || "").toLowerCase()] ||
+    String(mimeType || "image/png").split("/")[1]?.replace(/[^a-z0-9]/gi, "") ||
+    "png"
+  );
+}
+
 async function imageToFile(image, index = 0) {
   const fallbackMimeType = image?.mimeType || "image/png";
   const encoded = String(image?.b64Json || "");
@@ -862,8 +895,10 @@ async function imageToFile(image, index = 0) {
   }
   if (!blob || !blob.size) throw new Error("画廊记录中没有可编辑的图片数据");
   if (blob.size > MAX_FILE_SIZE) throw new Error("图片超过 20 MB，无法作为编辑项载入");
-  const mimeType = blob.type || fallbackMimeType;
-  const extension = mimeType.split("/")[1]?.replace(/[^a-z0-9]/gi, "") || "png";
+  const detectedMimeType = await detectImageMimeType(blob);
+  const declaredMimeType = String(blob.type || fallbackMimeType).toLowerCase();
+  const mimeType = detectedMimeType || (declaredMimeType.startsWith("image/") ? declaredMimeType : "image/png");
+  const extension = imageExtension(mimeType);
   return new File([blob], `imageflow-edit-${Date.now()}-${index + 1}.${extension}`, {
     type: mimeType,
     lastModified: Date.now(),
