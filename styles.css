@@ -1226,7 +1226,8 @@ input:focus {
 }
 
 .queue-status.queued,
-.queue-status.running {
+.queue-status.running,
+.queue-status.retrying {
   background: var(--blue-soft);
   color: var(--blue);
 }
@@ -1268,6 +1269,19 @@ input:focus {
   color: var(--ink-soft);
   font-size: 10px;
   white-space: nowrap;
+}
+
+.queue-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.queue-retry-button {
+  padding: 0;
+  color: var(--danger);
+  font-size: 10px;
 }
 
 .empty-state {
@@ -1663,6 +1677,10 @@ input:focus {
   }
 
   .queue-time {
+    grid-column: auto;
+  }
+
+  .queue-actions {
     grid-column: 2;
   }
 
