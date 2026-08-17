@@ -736,19 +736,6 @@ img {
   line-height: 1.5;
 }
 
-.prompt-column-tag {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  min-height: 22px;
-  padding: 0 7px;
-  border-radius: 7px;
-  background: #fff;
-  color: var(--ink-soft);
-  font-size: 10px;
-  font-weight: 760;
-}
-
 .prompt-editor textarea {
   height: 150px;
   min-height: 150px;
@@ -769,13 +756,6 @@ img {
   background: #fff;
 }
 
-.preset-preview > span {
-  color: var(--blue);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-}
-
 .preset-preview textarea {
   min-height: 120px;
   height: 120px;
@@ -785,19 +765,6 @@ img {
   color: var(--ink-muted);
   font-size: 11px;
   line-height: 1.65;
-}
-
-.preset-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-}
-
-.preset-save-status {
-  color: var(--ink-soft);
-  font-size: 10px;
-  line-height: 1.45;
 }
 
 .danger-text-button {

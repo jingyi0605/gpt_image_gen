@@ -166,15 +166,10 @@ const els = {
   galleryCount: $("galleryCount"),
   sceneHint: $("sceneHint"),
   workspaceTitle: $("workspaceTitle"),
-  promptHint: $("promptHint"),
   promptInput: $("promptInput"),
   promptPresetSelect: $("promptPresetSelect"),
-  presetPreview: $("presetPreview"),
-  presetPreviewLabel: $("presetPreviewLabel"),
   presetPromptInput: $("presetPromptInput"),
-  presetSaveStatus: $("presetSaveStatus"),
   restorePresetButton: $("restorePresetButton"),
-  resetPromptButton: $("resetPromptButton"),
   editSourceBlock: $("editSourceBlock"),
   continuationBanner: $("continuationBanner"),
   continuationTitle: $("continuationTitle"),
@@ -777,8 +772,6 @@ function renderPresetPreview() {
   const preset = getPromptPreset(groupId, els.promptPresetSelect.value);
   state.appliedPreset = { groupId, presetId: preset.id, label: preset.label, prompt: preset.prompt };
   els.presetPromptInput.value = preset.prompt;
-  els.presetPreviewLabel.textContent = preset.prompt ? "已应用 · 自动保存" : "已应用 · 空白要求";
-  els.presetSaveStatus.textContent = "选择即生效，修改自动保存到本地";
 }
 
 function syncWorkspaceControls() {
@@ -804,8 +797,6 @@ function updatePresetPrompt(event) {
   if (state.appliedPreset?.groupId === groupId && state.appliedPreset?.presetId === presetId) {
     state.appliedPreset.prompt = value;
   }
-  els.presetPreviewLabel.textContent = value ? "已应用 · 已修改" : "已应用 · 空白要求";
-  els.presetSaveStatus.textContent = "已保存到当前浏览器";
 }
 
 function restoreSelectedPreset() {
@@ -828,7 +819,6 @@ function applyScene(scene, { preserveContinuation = false } = {}) {
   });
   els.sceneHint.textContent = config.hint;
   els.workspaceTitle.textContent = config.title;
-  els.promptHint.textContent = config.hint;
   renderPromptPresetOptions(scene, config.defaultPresetId);
   els.promptInput.value = "";
   setMessage(els.submitMessage, "");
@@ -837,13 +827,6 @@ function applyScene(scene, { preserveContinuation = false } = {}) {
   updateSourceSizeHint();
   if (!preserveContinuation && config.endpoint === "generations" && state.files.length) clearUploads({ keepContinuation: true });
   syncWorkspaceControls();
-}
-
-function resetPrompt() {
-  const config = SCENES[state.scene];
-  renderPromptPresetOptions(state.scene, config.defaultPresetId);
-  els.promptInput.value = "";
-  setMessage(els.submitMessage, "");
 }
 
 function getFilePreview(file) {
@@ -1929,7 +1912,6 @@ function bindEvents() {
     if (button.classList.contains("stepper-item")) return;
     button.addEventListener("click", () => goToStep(button.dataset.stepTarget));
   });
-  els.resetPromptButton.addEventListener("click", resetPrompt);
   els.promptPresetSelect.addEventListener("change", renderPresetPreview);
   els.presetPromptInput.addEventListener("input", updatePresetPrompt);
   els.restorePresetButton.addEventListener("click", restoreSelectedPreset);
