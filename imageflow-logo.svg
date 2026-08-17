@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="144" height="144" viewBox="0 0 144 144" fill="none" role="img" aria-labelledby="imageflow-logo-title imageflow-logo-description">
+  <title id="imageflow-logo-title">ImageFlow</title>
+  <desc id="imageflow-logo-description">ImageFlow GPT 图片工作台标志：一条由多种色彩组成的流动曲线，代表图片生成与编辑流程。</desc>
+  <defs>
+    <linearGradient id="flow-gradient" x1="30" y1="43" x2="125" y2="86" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#72DCCA" />
+      <stop offset="0.48" stop-color="#8E83FF" />
+      <stop offset="1" stop-color="#F7A46F" />
+    </linearGradient>
+    <filter id="mark-shadow" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#0D1729" flood-opacity="0.14" />
+    </filter>
+  </defs>
+
+  <g filter="url(#mark-shadow)">
+    <rect x="8" y="8" width="128" height="128" rx="34" fill="#0D1729" />
+  </g>
+  <path d="M29 34H52M29 34V56M115 110H92M115 110V88" stroke="#FFFFFF" stroke-opacity="0.24" stroke-width="3" stroke-linecap="round" />
+  <path d="M29 87C42 87 45 53 61 53C77 53 78 88 94 88C109 88 112 56 125 56" stroke="url(#flow-gradient)" stroke-width="12" stroke-linecap="round" />
+  <path d="M30 106C44 106 47 78 61 78C75 78 78 104 93 104" stroke="#72DCCA" stroke-opacity="0.38" stroke-width="5" stroke-linecap="round" />
+  <circle cx="107" cy="31" r="8" fill="#F7A46F" />
+  <circle cx="107" cy="31" r="16" stroke="#72DCCA" stroke-opacity="0.48" stroke-width="2" />
+</svg>

@@ -452,7 +452,6 @@ async function sub2ApiRequest(path, options = {}) {
   const headers = new Headers(options.headers || {});
   headers.set("Authorization", `Bearer ${state.sub2api.token}`);
   headers.set("Accept", "application/json");
-  headers.set("X-User-UI-Request", "1");
   let response;
   try {
     response = await fetch(sub2ApiUrl(path), {
