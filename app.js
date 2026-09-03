@@ -140,6 +140,7 @@ const STATUS_LABELS = {
   retrying: "等待重试",
   succeeded: "已完成",
   failed: "失败",
+  cancelled: "已终止",
   deleted: "已删除",
 };
 
@@ -233,6 +234,7 @@ const state = {
   jobs: new Map(),
   pollers: new Map(),
   retryTimers: new Map(),
+  abortControllers: new Map(),
   runningJobs: new Set(),
   galleryRecords: [],
   db: null,
@@ -618,6 +620,13 @@ function getActiveEndpoint() {
 
 function statusLabel(status) {
   return STATUS_LABELS[status] || status || "等待中";
+}
+
+function jobProgressLabel(job) {
+  const max = job.maxAttempts || MAX_JOB_ATTEMPTS;
+  if (job.remoteId && job.pollFailures) return `轮询第 ${Math.min(job.pollFailures, max)}/${max} 次`;
+  if (job.attempts) return `提交第 ${Math.min(job.attempts, max)}/${max} 次`;
+  return "";
 }
 
 function apiUrl(path) {
@@ -1128,7 +1137,7 @@ function buildEditForm(payload, files = [], includeEndpoint = false) {
   return form;
 }
 
-async function submitRemoteTask(endpoint, payload, files = []) {
+async function submitRemoteTask(endpoint, payload, files = [], options = {}) {
   if (endpoint === "generations") {
     try {
       return {
@@ -1136,6 +1145,7 @@ async function submitRemoteTask(endpoint, payload, files = []) {
         response: await apiRequest("/images/generations", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: options.signal,
           body: JSON.stringify(payload),
         }),
       };
@@ -1146,6 +1156,7 @@ async function submitRemoteTask(endpoint, payload, files = []) {
         response: await apiRequest("/images/jobs", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          signal: options.signal,
           body: JSON.stringify({ ...payload, endpoint }),
         }),
       };
@@ -1157,6 +1168,7 @@ async function submitRemoteTask(endpoint, payload, files = []) {
       mode: "sync",
       response: await apiRequest("/images/edits", {
         method: "POST",
+        signal: options.signal,
         body: buildEditForm(payload, files),
       }),
     };
@@ -1166,6 +1178,7 @@ async function submitRemoteTask(endpoint, payload, files = []) {
       mode: "queue",
       response: await apiRequest("/images/jobs", {
         method: "POST",
+        signal: options.signal,
         body: buildEditForm(payload, files, true),
       }),
     };
@@ -1196,6 +1209,8 @@ function createLocalJob(payload) {
     images: [],
     error: "",
     lastError: "",
+    pollFailures: 0,
+    emptyResultChecks: 0,
   };
 }
 
@@ -1258,11 +1273,30 @@ function friendlyError(error) {
 }
 
 function normalizeImages(images) {
-  return (Array.isArray(images) ? images : [])
+  const candidates = typeof images === "string"
+    ? [images]
+    : Array.isArray(images)
+    ? images
+    : images && typeof images === "object"
+        ? Array.isArray(images.data)
+          ? images.data
+          : Array.isArray(images.images)
+            ? images.images
+            : images.b64_json || images.b64Json || images.url || images.image_url
+              ? [images]
+              : []
+        : [];
+  return candidates
     .map((image, index) => {
+      if (typeof image === "string") {
+        return { id: createId(`image-${index + 1}`), mimeType: "image/png", source: image, b64Json: "" };
+      }
+      if (!image || typeof image !== "object") return null;
       const mimeType = image.mime_type || image.mimeType || "image/png";
-      const b64 = image.b64_json || image.b64Json || "";
-      const source = b64 ? `data:${mimeType};base64,${b64}` : image.url || image.image_url || "";
+      const b64 = image.b64_json || image.b64Json || image.base64 || "";
+      const source = b64
+        ? `data:${mimeType};base64,${b64}`
+        : image.url || image.image_url || image.imageUrl || image.source || "";
       return {
         id: image.id || createId(`image-${index + 1}`),
         mimeType,
@@ -1270,7 +1304,47 @@ function normalizeImages(images) {
         b64Json: b64,
       };
     })
-    .filter((image) => image.source);
+    .filter((image) => image?.source);
+}
+
+function extractImages(payload) {
+  if (!payload || typeof payload !== "object") return [];
+  const candidates = [
+    payload.images,
+    payload.data,
+    payload.data?.images,
+    payload.data?.data,
+    payload.result?.images,
+    payload.result?.data,
+    payload.result,
+    payload.output?.images,
+    payload.output?.data,
+    payload.image,
+  ];
+  for (const candidate of candidates) {
+    const images = normalizeImages(candidate);
+    if (images.length) return images;
+  }
+  return [];
+}
+
+function normalizeJobStatus(value) {
+  const status = String(value || "").trim().toLowerCase();
+  if (["success", "succeeded", "completed", "complete", "done"].includes(status)) return "succeeded";
+  if (["cancelled", "canceled", "aborted", "deleted"].includes(status)) return "cancelled";
+  if (["failure", "failed", "error"].includes(status)) return "failed";
+  if (["in_progress", "processing", "running"].includes(status)) return "running";
+  if (["pending", "waiting", "queued"].includes(status)) return "queued";
+  return "";
+}
+
+function normalizeRemotePayload(payload) {
+  if (payload?.data && !Array.isArray(payload.data) && typeof payload.data === "object") return payload.data;
+  return payload;
+}
+
+function isAbortError(error) {
+  return error?.name === "AbortError" || /aborted|已终止/i.test(String(error?.message || ""));
 }
 
 function isRetryableError(error) {
@@ -1326,6 +1400,7 @@ function updateJob(job, patch = {}) {
 }
 
 async function completeLocalJob(job, images) {
+  if (job.status === "cancelled") return;
   if (!images.length) throw new ApiError("标准图片接口没有返回图片", 0);
   updateJob(job, {
     status: "succeeded",
@@ -1334,7 +1409,10 @@ async function completeLocalJob(job, images) {
     lastError: "",
     nextAttemptAt: 0,
     finishedAt: Date.now(),
+    pollFailures: 0,
+    emptyResultChecks: 0,
   });
+  state.abortControllers.delete(job.id);
   await persistLocalJob(job);
   await persistGalleryRecord(job);
   showLatestResult(job);
@@ -1362,6 +1440,7 @@ function scheduleRetryTimer(job) {
 }
 
 async function failLocalJob(job, error) {
+  if (job.status === "cancelled" || isAbortError(error)) return;
   const message = friendlyError(error);
   updateJob(job, { error: message, lastError: message });
   if (isRetryableError(error) && job.attempts < job.maxAttempts) {
@@ -1384,11 +1463,19 @@ async function failLocalJob(job, error) {
 
 async function runLocalJob(job) {
   if (state.runningJobs.has(job.id) || job.status !== "queued") return;
+  if ((job.attempts || 0) >= (job.maxAttempts || MAX_JOB_ATTEMPTS)) {
+    updateJob(job, { status: "failed", finishedAt: Date.now(), error: "已达到最大重试次数", lastError: "已达到最大重试次数" });
+    await persistLocalJob(job);
+    renderQueue();
+    return;
+  }
   if (job.remoteId) {
     startPolling(job);
     return;
   }
   state.runningJobs.add(job.id);
+  const controller = new AbortController();
+  state.abortControllers.set(job.id, controller);
   updateJob(job, {
     status: "running",
     attempts: (job.attempts || 0) + 1,
@@ -1398,18 +1485,29 @@ async function runLocalJob(job) {
   try {
     await persistLocalJob(job);
     renderQueue();
-    const result = await submitRemoteTask(job.endpoint, jobPayload(job), job.files || []);
+    const result = await submitRemoteTask(job.endpoint, jobPayload(job), job.files || [], { signal: controller.signal });
+    if (job.status === "cancelled") return;
     const response = result.response;
     if (result.mode === "sync") {
-      await completeLocalJob(job, normalizeImages(response?.images || response?.data || []));
+      await completeLocalJob(job, extractImages(response));
       return;
     }
-    job.remoteId = response?.id || response?.job_id || "";
+    const normalizedResponse = normalizeRemotePayload(response);
+    const immediateImages = extractImages(response);
+    const immediateStatus = normalizeJobStatus(normalizedResponse.status || normalizedResponse.state);
+    if (immediateImages.length) {
+      await completeLocalJob(job, immediateImages);
+      return;
+    }
+    job.remoteId = normalizedResponse?.id || normalizedResponse?.job_id || "";
     if (!job.remoteId) throw new ApiError("接口没有返回任务 ID", 0);
     updateJob(job, {
-      status: response.status || "queued",
-      error: response.error_message || "",
+      // 成功状态但暂未携带图片时仍需继续查询详情，避免过早停止轮询。
+      status: immediateStatus === "succeeded" ? "queued" : immediateStatus || "queued",
+      error: normalizedResponse.error_message || "",
       lastError: "",
+      pollFailures: 0,
+      emptyResultChecks: 0,
     });
     await persistLocalJob(job);
     renderQueue();
@@ -1418,6 +1516,7 @@ async function runLocalJob(job) {
   } catch (error) {
     await failLocalJob(job, error);
   } finally {
+    state.abortControllers.delete(job.id);
     state.runningJobs.delete(job.id);
     pumpQueue();
   }
@@ -1425,8 +1524,10 @@ async function runLocalJob(job) {
 
 function scheduleRemotePoll(job, delay = POLL_INTERVAL) {
   stopPolling(job.id);
+  if (job.status === "cancelled" || job.status === "failed" || job.status === "succeeded") return;
   const timer = window.setTimeout(() => {
     state.pollers.delete(job.id);
+    if (job.status === "cancelled" || job.status === "failed" || job.status === "succeeded") return;
     startPolling(job);
   }, delay);
   state.pollers.set(job.id, timer);
@@ -1435,14 +1536,56 @@ function scheduleRemotePoll(job, delay = POLL_INTERVAL) {
 function startPolling(job) {
   if (!job.remoteId || state.pollers.has(job.id)) return;
   const poll = async () => {
+    if (job.status === "cancelled" || job.status === "failed" || job.status === "succeeded") return;
+    const controller = new AbortController();
+    state.abortControllers.set(job.id, controller);
     try {
-      const detail = await apiRequest(`/images/jobs/${encodeURIComponent(job.remoteId)}`);
+      const detail = await apiRequest(`/images/jobs/${encodeURIComponent(job.remoteId)}`, { signal: controller.signal });
+      const normalizedDetail = normalizeRemotePayload(detail);
+      if (job.status === "cancelled") return;
+      const images = extractImages(detail);
+      const status = normalizeJobStatus(
+        normalizedDetail.status || normalizedDetail.state || normalizedDetail.result?.status,
+      );
+      const hasImages = images.length > 0;
+      if (status === "succeeded" && !hasImages) {
+        const emptyResultChecks = (job.emptyResultChecks || 0) + 1;
+        if (emptyResultChecks >= (job.maxAttempts || MAX_JOB_ATTEMPTS)) {
+          updateJob(job, {
+            status: "failed",
+            emptyResultChecks,
+            error: "接口已标记成功，但未返回图片",
+            lastError: "响应缺少 images/data 图片字段",
+            finishedAt: Date.now(),
+            nextAttemptAt: 0,
+          });
+          await persistLocalJob(job);
+          renderQueue();
+          els.previewStatus.textContent = "结果缺失";
+          els.previewStatus.className = "preview-status is-error";
+          stopPolling(job.id);
+          return;
+        }
+        updateJob(job, {
+          status: "retrying",
+          emptyResultChecks,
+          error: "接口已完成，正在等待图片结果",
+          lastError: "响应暂未包含图片字段",
+          nextAttemptAt: Date.now() + POLL_INTERVAL,
+        });
+        await persistLocalJob(job);
+        renderQueue();
+        scheduleRemotePoll(job);
+        return;
+      }
       updateJob(job, {
-        status: detail.status || job.status,
-        error: detail.error_message || detail.error || "",
+        status: status || (hasImages ? "succeeded" : job.status),
+        error: normalizedDetail.error_message || normalizedDetail.error || "",
+        pollFailures: 0,
+        emptyResultChecks: 0,
       });
       if (job.status === "succeeded") {
-        await completeLocalJob(job, normalizeImages(detail.images || detail.data || []));
+        await completeLocalJob(job, images);
         stopPolling(job.id);
         return;
       }
@@ -1462,9 +1605,28 @@ function startPolling(job) {
       renderQueue();
       scheduleRemotePoll(job);
     } catch (error) {
+      if (job.status === "cancelled" || isAbortError(error)) return;
       if (isRetryableError(error)) {
+        const pollFailures = (job.pollFailures || 0) + 1;
+        if (pollFailures >= (job.maxAttempts || MAX_JOB_ATTEMPTS)) {
+          updateJob(job, {
+            status: "failed",
+            pollFailures,
+            error: "轮询连续失败，已停止重试",
+            lastError: friendlyError(error),
+            finishedAt: Date.now(),
+            nextAttemptAt: 0,
+          });
+          await persistLocalJob(job);
+          renderQueue();
+          els.previewStatus.textContent = "轮询失败";
+          els.previewStatus.className = "preview-status is-error";
+          stopPolling(job.id);
+          return;
+        }
         updateJob(job, {
           status: "retrying",
+          pollFailures,
           error: friendlyError(error),
           lastError: friendlyError(error),
           nextAttemptAt: Date.now() + POLL_INTERVAL,
@@ -1485,6 +1647,8 @@ function startPolling(job) {
       els.previewStatus.textContent = "轮询失败";
       els.previewStatus.className = "preview-status is-error";
       stopPolling(job.id);
+    } finally {
+      if (state.abortControllers.get(job.id) === controller) state.abortControllers.delete(job.id);
     }
   };
   poll();
@@ -1528,10 +1692,45 @@ async function retryJob(jobId) {
     error: "",
     lastError: "",
     remoteId: "",
+    pollFailures: 0,
+    emptyResultChecks: 0,
   });
   await persistLocalJob(job);
   renderQueue();
   pumpQueue();
+}
+
+async function cancelJob(jobId) {
+  const job = state.jobs.get(jobId);
+  if (!job || !["queued", "running", "retrying"].includes(job.status)) return;
+  stopPolling(job.id);
+  const retryTimer = state.retryTimers.get(job.id);
+  if (retryTimer) window.clearTimeout(retryTimer);
+  state.retryTimers.delete(job.id);
+  // 先切换本地终态，再中止请求，避免并发 catch 将任务重新排入重试队列。
+  updateJob(job, {
+    status: "cancelled",
+    error: "已手动终止",
+    lastError: "已手动终止",
+    nextAttemptAt: 0,
+    finishedAt: Date.now(),
+  });
+  const controller = state.abortControllers.get(job.id);
+  if (controller) controller.abort();
+  if (job.remoteId) {
+    try {
+      await apiRequest(`/images/jobs/${encodeURIComponent(job.remoteId)}`, { method: "DELETE" });
+    } catch (error) {
+      if (!isUnsupportedEndpointError(error) && error?.status !== 404) {
+        // 远程取消失败不影响本地终止，避免任务继续占用浏览器队列。
+      }
+    }
+  }
+  await persistLocalJob(job);
+  renderQueue();
+  els.previewStatus.textContent = "已终止";
+  els.previewStatus.className = "preview-status is-error";
+  showToast("任务已终止");
 }
 
 function renderQueue() {
@@ -1550,9 +1749,10 @@ function renderQueue() {
           <span class="queue-status ${escapeHtml(job.status)}">${escapeHtml(statusLabel(job.status))}</span>
           <div class="queue-copy">
             <strong title="${escapeHtml(job.prompt)}">${escapeHtml(job.prompt || "未命名任务")}</strong>
-            <small>${escapeHtml(endpointLabel(job.endpoint))} · ${escapeHtml(job.model)}${job.attempts ? ` · 第 ${job.attempts}/${job.maxAttempts || MAX_JOB_ATTEMPTS} 次` : ""}${job.status === "retrying" && job.nextAttemptAt ? ` · ${Math.max(1, Math.ceil((job.nextAttemptAt - Date.now()) / 1000))} 秒后重试` : ""}${job.error ? ` · ${escapeHtml(job.error)}` : ""}</small>
+            <small>${escapeHtml(endpointLabel(job.endpoint))} · ${escapeHtml(job.model)}${jobProgressLabel(job) ? ` · ${escapeHtml(jobProgressLabel(job))}` : ""}${job.status === "retrying" && job.nextAttemptAt ? ` · ${Math.max(1, Math.ceil((job.nextAttemptAt - Date.now()) / 1000))} 秒后重试` : ""}${job.error ? ` · ${escapeHtml(job.error)}` : ""}</small>
           </div>
           <div class="queue-actions">
+            ${["queued", "running", "retrying"].includes(job.status) ? `<button class="text-button queue-cancel-button" type="button" data-cancel-job="${escapeHtml(job.id)}">终止</button>` : ""}
             ${job.status === "failed" ? `<button class="text-button queue-retry-button" type="button" data-retry-job="${escapeHtml(job.id)}">重试</button>` : ""}
             <span class="queue-time">${escapeHtml(formatTime(job.createdAt))}</span>
           </div>
@@ -1568,7 +1768,27 @@ async function loadLocalJobs() {
     jobs.forEach((job) => {
       job.maxAttempts = job.maxAttempts || MAX_JOB_ATTEMPTS;
       job.attempts = Number(job.attempts) || 0;
+      job.pollFailures = Number(job.pollFailures) || 0;
+      job.emptyResultChecks = Number(job.emptyResultChecks) || 0;
       job.files = job.files || [];
+      if (!job.remoteId && ["queued", "running", "retrying"].includes(job.status) && job.attempts >= job.maxAttempts) {
+        job.status = "failed";
+        job.error = "已达到最大重试次数";
+        job.lastError = job.error;
+        job.finishedAt = job.finishedAt || Date.now();
+        job.nextAttemptAt = 0;
+      }
+      if (
+        job.remoteId &&
+        ["queued", "running", "retrying"].includes(job.status) &&
+        (job.pollFailures >= job.maxAttempts || job.emptyResultChecks >= job.maxAttempts)
+      ) {
+        job.status = "failed";
+        job.error = job.emptyResultChecks >= job.maxAttempts ? "接口已完成但未返回图片" : "轮询连续失败，已停止重试";
+        job.lastError = job.error;
+        job.finishedAt = job.finishedAt || Date.now();
+        job.nextAttemptAt = 0;
+      }
       if (job.status === "running" && !job.remoteId) {
         job.status = "queued";
         job.nextAttemptAt = 0;
@@ -1591,6 +1811,18 @@ async function resumeLocalJobs() {
       continue;
     }
     if (job.remoteId && job.status === "retrying") {
+      if (
+        (job.pollFailures || 0) >= (job.maxAttempts || MAX_JOB_ATTEMPTS) ||
+        (job.emptyResultChecks || 0) >= (job.maxAttempts || MAX_JOB_ATTEMPTS)
+      ) {
+        updateJob(job, {
+          status: "failed",
+          error: job.emptyResultChecks >= (job.maxAttempts || MAX_JOB_ATTEMPTS) ? "接口已完成但未返回图片" : "轮询连续失败，已停止重试",
+          finishedAt: Date.now(),
+          nextAttemptAt: 0,
+        });
+        continue;
+      }
       scheduleRemotePoll(job, Math.max(POLL_INTERVAL, (job.nextAttemptAt || now) - now));
       continue;
     }
@@ -1616,7 +1848,15 @@ async function refreshQueue({ silent = false } = {}) {
   els.refreshQueueButton.disabled = true;
   try {
     const payload = await apiRequest("/images/jobs?page=1&page_size=30");
-    const remoteJobs = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
+    const remoteJobs = Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload?.data?.items)
+        ? payload.data.items
+        : Array.isArray(payload?.items)
+          ? payload.items
+          : Array.isArray(payload)
+            ? payload
+            : [];
     for (const remote of remoteJobs) {
       const remoteId = remote.id || remote.job_id;
       if (!remoteId) continue;
@@ -1640,7 +1880,7 @@ async function refreshQueue({ silent = false } = {}) {
             response_format: "b64_json",
           },
           files: [],
-          status: remote.status || "queued",
+          status: normalizeJobStatus(remote.status) || "queued",
           attempts: 0,
           maxAttempts: MAX_JOB_ATTEMPTS,
           nextAttemptAt: 0,
@@ -1649,13 +1889,19 @@ async function refreshQueue({ silent = false } = {}) {
           images: [],
           error: remote.error_message || "",
           lastError: remote.error_message || "",
+          pollFailures: 0,
+          emptyResultChecks: 0,
         };
         state.jobs.set(local.id, local);
       } else {
-        updateJob(local, {
-          status: remote.status || local.status,
-          error: remote.error_message || local.error,
-        });
+        const remoteStatus = normalizeJobStatus(remote.status);
+        // 本地已经拿到图片的终态不可被刷新接口的旧状态回退。
+        if (!(local.status === "succeeded" && local.images?.length)) {
+          updateJob(local, {
+            status: remoteStatus || local.status,
+            error: remote.error_message || local.error,
+          });
+        }
       }
       await persistLocalJob(local);
       if (["queued", "running"].includes(local.status)) startPolling(local);
@@ -1672,15 +1918,16 @@ async function refreshQueue({ silent = false } = {}) {
 async function loadJobDetail(job) {
   try {
     const detail = await apiRequest(`/images/jobs/${encodeURIComponent(job.remoteId)}?preview=1`);
+    const normalizedDetail = normalizeRemotePayload(detail);
     updateJob(job, {
-      status: detail.status || job.status,
-      images: normalizeImages(detail.images || detail.data || []),
-      error: detail.error_message || job.error,
+      status: normalizeJobStatus(normalizedDetail.status || normalizedDetail.state) || (extractImages(detail).length ? "succeeded" : job.status),
+      images: extractImages(detail),
+      error: normalizedDetail.error_message || normalizedDetail.error || job.error,
     });
     if (job.status === "succeeded" && job.images.length) {
       await persistLocalJob(job);
       await persistGalleryRecord(job);
-      if (!state.latestResult) showLatestResult(job);
+      showLatestResult(job);
     }
     renderQueue();
     loadGallery();
@@ -2003,6 +2250,11 @@ function bindEvents() {
     }
   });
   els.queueList.addEventListener("click", (event) => {
+    const cancel = event.target.closest("[data-cancel-job]");
+    if (cancel) {
+      cancelJob(cancel.dataset.cancelJob).catch((error) => showToast(error.message));
+      return;
+    }
     const retry = event.target.closest("[data-retry-job]");
     if (!retry) return;
     retryJob(retry.dataset.retryJob).catch((error) => showToast(error.message));
