@@ -311,6 +311,12 @@ function normalizeBaseUrl(value) {
   try {
     const url = new URL(raw);
     if (!/^https?:$/.test(url.protocol)) return "";
+    // HTTPS 页面只允许访问 HTTPS 接口；本地开发地址保留 HTTP 兼容性。
+    if (
+      window.location.protocol === "https:" &&
+      url.protocol !== "https:" &&
+      !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)
+    ) return "";
     url.hash = "";
     url.search = "";
     url.pathname = url.pathname.replace(/\/+$/, "").replace(/\/v1$/, "");
