@@ -268,6 +268,8 @@ function normalizeSub2ApiBaseUrl(value) {
   try {
     const url = new URL(raw);
     if (!/^https?:$/.test(url.protocol)) return "";
+    // HTTPS 页面不允许把 Sub2API 会话令牌降级发送到明文 HTTP。
+    if (window.location.protocol === "https:" && url.protocol !== "https:") return "";
     url.hash = "";
     url.search = "";
     url.pathname = url.pathname.replace(/\/+$/, "");
@@ -371,17 +373,40 @@ function readInitialConfig() {
 
   if (queryBaseUrl || queryApiKey || queryModel) {
     saveSessionConfig(config);
-    if (queryApiKey) {
-      const sanitized = new URL(window.location.href);
-      ["apikey", "api_key", "apiKey", "key"].forEach((key) => sanitized.searchParams.delete(key));
-      window.history.replaceState({}, document.title, sanitized.toString());
-    }
   }
+
+  // 令牌、Key 和嵌入上下文只在初始化时读取，随后立即从地址栏移除，降低历史记录和误分享泄露风险。
+  sanitizeInitialUrl();
 
   if (sub2apiContext.embedded) {
     if (config.source === "URL 参数") config.source = "URL 参数 / Sub2API";
   }
   return config;
+}
+
+function sanitizeInitialUrl() {
+  const sensitiveParams = [
+    "apikey",
+    "api_key",
+    "apiKey",
+    "key",
+    "token",
+    "user_id",
+    "userId",
+    "src_host",
+    "sub2api_url",
+    "sub2api_base_url",
+    "src_url",
+  ];
+  const sanitized = new URL(window.location.href);
+  let changed = false;
+  sensitiveParams.forEach((key) => {
+    if (sanitized.searchParams.has(key)) {
+      sanitized.searchParams.delete(key);
+      changed = true;
+    }
+  });
+  if (changed) window.history.replaceState({}, document.title, sanitized.toString());
 }
 
 function saveSessionConfig(config) {
@@ -906,6 +931,7 @@ async function imageToFile(image, index = 0) {
       : decodeBase64Blob(encoded, fallbackMimeType)
     : decodeDataUrl(image?.source, fallbackMimeType);
   if (!blob && image?.source) {
+    if (!isAllowedImageSource(image.source)) throw new Error("画廊图片地址不受信任，无法继续编辑");
     const response = await fetch(image.source);
     if (!response.ok) throw new Error("无法读取画廊中的图片");
     blob = await response.blob();
@@ -1304,7 +1330,18 @@ function normalizeImages(images) {
         b64Json: b64,
       };
     })
-    .filter((image) => image?.source);
+    .filter((image) => image?.source && isAllowedImageSource(image.source));
+}
+
+function isAllowedImageSource(source) {
+  try {
+    const url = new URL(String(source || ""), window.location.href);
+    if (["data:", "blob:"].includes(url.protocol)) return true;
+    if (url.origin === window.location.origin || url.protocol === "https:") return true;
+    return url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  } catch {
+    return false;
+  }
 }
 
 function extractImages(payload) {
@@ -1968,6 +2005,10 @@ function showLatestResult(job) {
 }
 
 function openLightbox(source, caption) {
+  if (!isAllowedImageSource(source)) {
+    showToast("图片地址不受信任，无法预览");
+    return;
+  }
   els.lightboxImage.src = source;
   els.lightboxCaption.textContent = caption || "生成结果";
   els.downloadButton.href = source;
@@ -2116,7 +2157,9 @@ function renderGallery() {
   }
   els.galleryGrid.innerHTML = state.galleryRecords
     .flatMap((record) =>
-      (record.images || []).map((image, index) => ({ record, image, index })),
+      (record.images || [])
+        .filter((image) => isAllowedImageSource(image.source))
+        .map((image, index) => ({ record, image, index })),
     )
     .map(
       ({ record, image, index }) => `
